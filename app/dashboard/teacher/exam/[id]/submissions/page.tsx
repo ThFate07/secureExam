@@ -1,0 +1,148 @@
+"use client";
+
+import { useParams, useRouter } from 'next/navigation';
+import { useExamStore } from '../../../../../hooks/useExamStore';
+import { useMemo, useState } from 'react';
+import { Button } from '../../../../../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../../../components/ui/card';
+import { Input } from '../../../../../components/ui/input';
+import { Badge } from '../../../../../components/ui/badge';
+import { ArrowLeft, FileDown, Filter, Search, BarChart3, Users, Clock, Percent } from 'lucide-react';
+
+export default function ExamSubmissionsPage() {
+  const params = useParams();
+  const router = useRouter();
+  const examId = params.id as string;
+  const { currentExam, getResults } = useExamStore(examId);
+  const [search, setSearch] = useState('');
+  const [minPercent, setMinPercent] = useState('');
+  const [maxPercent, setMaxPercent] = useState('');
+
+  const results = useMemo(() => currentExam ? getResults(examId) : [], [currentExam, getResults, examId]);
+
+  const filtered = results.filter(r => {
+    const matchesSearch = !search || r.studentId.toLowerCase().includes(search.toLowerCase());
+    const matchesMin = !minPercent || r.percentage >= Number(minPercent);
+    const matchesMax = !maxPercent || r.percentage <= Number(maxPercent);
+    return matchesSearch && matchesMin && matchesMax;
+  });
+
+  const avg = filtered.length ? (filtered.reduce((s, r) => s + r.percentage, 0) / filtered.length).toFixed(1) : '—';
+  const high = filtered.length ? Math.max(...filtered.map(r => r.percentage)) : '—';
+  const low = filtered.length ? Math.min(...filtered.map(r => r.percentage)) : '—';
+  const median = filtered.length ? (() => { const sorted=[...filtered].map(r=>r.percentage).sort((a,b)=>a-b); const mid=Math.floor(sorted.length/2); return sorted.length%2? sorted[mid] : ((sorted[mid-1]+sorted[mid])/2).toFixed(1); })() : '—';
+
+  const exportCSV = () => {
+    const header = ['Result ID','Student ID','Score','Total Questions','Percentage','Completed At','Time Spent (min)'];
+    const rows = filtered.map(r => [r.id, r.studentId, r.score, r.totalQuestions, r.percentage, r.completedAt, r.timeSpent]);
+    const csv = [header, ...rows].map(row => row.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `exam_${examId}_results.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  if (!currentExam) {
+    return (
+      <div className="p-8 max-w-4xl mx-auto">
+        <Button variant="outline" onClick={() => router.push('/dashboard/teacher')} className="mb-4"><ArrowLeft className="h-4 w-4 mr-2" />Back</Button>
+        <p className="text-gray-600">Exam not found.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 max-w-6xl mx-auto space-y-8">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Button variant="outline" onClick={() => router.back()}><ArrowLeft className="h-4 w-4 mr-2" />Back</Button>
+          <h1 className="text-2xl font-bold">Submissions - {currentExam.title}</h1>
+        </div>
+        <Button onClick={exportCSV}><FileDown className="h-4 w-4 mr-2" />Export CSV</Button>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5" />Overview</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-6 text-sm">
+            <div>
+              <p className="text-gray-500">Attempts</p>
+              <p className="text-xl font-semibold">{results.length}</p>
+            </div>
+            <div>
+              <p className="text-gray-500">Average %</p>
+              <p className="text-xl font-semibold">{avg}</p>
+            </div>
+            <div>
+              <p className="text-gray-500">Median %</p>
+              <p className="text-xl font-semibold">{median}</p>
+            </div>
+            <div>
+              <p className="text-gray-500">High %</p>
+              <p className="text-xl font-semibold">{high}</p>
+            </div>
+            <div>
+              <p className="text-gray-500">Low %</p>
+              <p className="text-xl font-semibold">{low}</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Filter className="h-5 w-5" />Filters</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="text-sm font-medium">Search Student</label>
+              <div className="relative mt-1">
+                <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                <Input className="pl-10" placeholder="Student ID" value={search} onChange={e => setSearch(e.target.value)} />
+              </div>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Min %</label>
+              <Input type="number" min={0} max={100} value={minPercent} onChange={e => setMinPercent(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-sm font-medium">Max %</label>
+              <Input type="number" min={0} max={100} value={maxPercent} onChange={e => setMaxPercent(e.target.value)} />
+            </div>
+            <div className="flex items-end">
+              <Button variant="outline" onClick={() => { setSearch(''); setMinPercent(''); setMaxPercent(''); }}>Reset</Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Users className="h-5 w-5" />Attempts ({filtered.length})</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {filtered.length === 0 && <p className="text-sm text-gray-600">No submissions match your filters.</p>}
+          {filtered.map(r => (
+            <div key={r.id} className="border rounded-lg p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div className="space-y-1 text-sm">
+                <p><span className="font-medium">Student:</span> {r.studentId}</p>
+                <p><span className="font-medium">Completed:</span> {new Date(r.completedAt).toLocaleString()}</p>
+                <p className="flex items-center gap-2"><Clock className="h-4 w-4" /> {r.timeSpent} min</p>
+              </div>
+              <div className="flex items-center gap-4">
+                <Badge variant="outline" className="text-blue-600">{r.score}/{r.totalQuestions}</Badge>
+                <Badge className={r.percentage >= 70 ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}>
+                  <Percent className="h-3 w-3 mr-1" />{r.percentage}%
+                </Badge>
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
