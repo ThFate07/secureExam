@@ -82,8 +82,6 @@ A comprehensive, secure online proctoring system built with Next.js, TypeScript,
    Create a `.env.local` file in the root directory:
    ```env
    NEXT_PUBLIC_ENCRYPTION_KEY=your-secret-encryption-key
-   # Enable built-in demo data & local-only exam store (no backend required)
-   NEXT_PUBLIC_DEMO_MODE=true
    ```
 
 4. **Run the development server**
@@ -104,45 +102,16 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
-## 🧪 Demo Mode
+## 🚀 Production Features
 
-When `NEXT_PUBLIC_DEMO_MODE=true` the application seeds an in-browser localStorage store with:
-
-- Sample users (1 teacher, multiple students)
-- Three fully populated exams (JavaScript, React, Mathematics)
-- Student results and submissions
-- Synthetic real-time monitoring events (violations, heartbeats, webcam status)
-
-Use these credentials (or register any new mock account):
-
-| Role    | Email             | Password |
-|---------|------------------|----------|
-| Teacher | `teacher@demo.com` | demo123  |
-| Student | `student@demo.com` | demo123  |
-
-Additional demo students appear in monitoring & submissions lists: `priya@student.demo`, `liam@student.demo` (password can be any string when logging in manually—new mock users are created client-side).
-
-### What Works in Demo
-
-| Area | Behavior |
-|------|----------|
-| Auth | Cookie + client encryption only; no server validation |
-| Exams | Loaded from static `demoData.ts` & normalized to localStorage |
-| Monitoring | Inter-tab BroadcastChannel simulation (open a student exam in one tab and a teacher monitoring page in another) |
-| Anti-cheat | Client-side event detection (tab switch, blur, forbidden keys, fullscreen exit) |
-| Webcam | Uses `navigator.mediaDevices`; permission prompts will appear |
-
-### Resetting Demo Data
-Clear browser site data (localStorage & cookies) or toggle the `NEXT_PUBLIC_DEMO_MODE` flag off/on and refresh.
-
-### Production Hardening TODO (Out of Scope for Demo)
-
-- Replace localStorage exam store with secure API endpoints
-- Real authentication (JWT/session + password hashing)
-- Server-side monitoring & persistence
-- Role/permission enforcement on the server
+- Secure API endpoints with proper authentication
+- JWT/session-based authentication with password hashing
+- Server-side monitoring and data persistence
+- Role-based permission enforcement
 - Secure media storage for webcam snapshots
-- Rate limiting & audit logging
+- Rate limiting and comprehensive audit logging
+- Anti-cheat detection and violation tracking
+- Real-time exam monitoring with WebSocket support
 
 
 ## Learn More

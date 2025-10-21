@@ -16,7 +16,7 @@ export default function AuthPage() {
   }, [isAuthenticated, router]);
 
   const handleLogin = async (data: { email: string; password: string; role: 'student' | 'teacher' }) => {
-    await login(data.email, data.password, data.role);
+    await login(data.email, data.password);
   };
 
   const handleRegister = async (data: { name: string; email: string; password: string; role: 'student' | 'teacher' }) => {

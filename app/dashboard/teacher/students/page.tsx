@@ -37,159 +37,28 @@ const StudentManagementPage = () => {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
 
-  // Mock students data
-  const [students] = useState<Student[]>([
-    {
-      id: 'student-1',
-      firstName: 'John',
-      lastName: 'Doe',
-      email: 'john.doe@email.com',
-      name: 'John Doe',
-      phone: '+1 (555) 123-4567',
-      studentId: 'STU001',
-      enrollmentDate: new Date('2024-01-15'),
-      status: 'active',
-      academicStatus: 'regular',
-      class: 'CS-101',
-      address: {
-        street: '123 Main St',
-        city: 'City',
-        state: 'State',
-        zipCode: '12345',
-        country: 'USA'
-      },
-      emergencyContact: {
-        name: 'Jane Doe',
-        phone: '+1 (555) 987-6543',
-        relationship: 'Mother'
-      },
-      academicInfo: {
-        gpa: 3.8,
-        totalCredits: 90,
-        completedCredits: 75,
-        semester: 'Spring',
-        year: 3,
-        major: 'Computer Science',
-        minor: 'Mathematics'
-      },
-      enrolledClasses: ['CS-101'],
-      createdAt: new Date('2024-01-15')
-    },
-    {
-      id: 'student-2',
-      firstName: 'Emma',
-      lastName: 'Wilson',
-      email: 'emma.wilson@email.com',
-      name: 'Emma Wilson',
-      phone: '+1 (555) 234-5678',
-      studentId: 'STU002',
-      enrollmentDate: new Date('2024-01-20'),
-      status: 'active',
-      academicStatus: 'honors',
-      class: 'CS-101',
-      address: {
-        street: '456 Oak Ave',
-        city: 'City',
-        state: 'State',
-        zipCode: '12345',
-        country: 'USA'
-      },
-      emergencyContact: {
-        name: 'Robert Wilson',
-        phone: '+1 (555) 876-5432',
-        relationship: 'Father'
-      },
-      academicInfo: {
-        gpa: 3.9,
-        totalCredits: 120,
-        completedCredits: 105,
-        semester: 'Spring',
-        year: 4,
-        major: 'Computer Science'
-      },
-      enrolledClasses: ['CS-101'],
-      createdAt: new Date('2024-01-20')
-    },
-    {
-      id: 'student-3',
-      firstName: 'Michael',
-      lastName: 'Brown',
-      email: 'michael.brown@email.com',
-      name: 'Michael Brown',
-      phone: '+1 (555) 345-6789',
-      studentId: 'STU003',
-      enrollmentDate: new Date('2024-02-01'),
-      status: 'inactive',
-      academicStatus: 'regular',
-      class: 'CS-102',
-      address: {
-        street: '789 Pine St',
-        city: 'City',
-        state: 'State',
-        zipCode: '12345',
-        country: 'USA'
-      },
-      emergencyContact: {
-        name: 'Sarah Brown',
-        phone: '+1 (555) 765-4321',
-        relationship: 'Mother'
-      },
-      academicInfo: {
-        gpa: 3.5,
-        totalCredits: 60,
-        completedCredits: 45,
-        semester: 'Spring',
-        year: 2,
-        major: 'Computer Engineering'
-      },
-      enrolledClasses: ['CS-102'],
-      createdAt: new Date('2024-02-01')
-    },
-    {
-      id: 'student-4',
-      firstName: 'Sarah',
-      lastName: 'Johnson',
-      email: 'sarah.johnson@email.com',
-      name: 'Sarah Johnson',
-      phone: '+1 (555) 456-7890',
-      studentId: 'STU004',
-      enrollmentDate: new Date('2024-01-10'),
-      status: 'active',
-      academicStatus: 'dean-list',
-      class: 'CS-102',
-      address: {
-        street: '321 Elm Dr',
-        city: 'City',
-        state: 'State',
-        zipCode: '12345',
-        country: 'USA'
-      },
-      emergencyContact: {
-        name: 'David Johnson',
-        phone: '+1 (555) 654-3210',
-        relationship: 'Father'
-      },
-      academicInfo: {
-        gpa: 4.0,
-        totalCredits: 90,
-        completedCredits: 80,
-        semester: 'Spring',
-        year: 3,
-        major: 'Software Engineering'
-      },
-      enrolledClasses: ['CS-102'],
-      createdAt: new Date('2024-01-10')
-    }
-  ]);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [classes, setClasses] = useState<string[]>([]);
 
-  // Mock classes data
-  const classes = [
-    'CS-101',
-    'CS-102',
-    'CS-201',
-    'CS-202',
-    'MATH-101'
-  ];
+  useEffect(() => {
+    // Fetch students from API
+    fetch('/api/teacher/students')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          const fetchedStudents = data.data.students.map((student: Student) => ({
+            ...student,
+            enrollmentDate: new Date(student.enrollmentDate),
+            createdAt: new Date(student.createdAt),
+          }));
+          setStudents(fetchedStudents);
+          setClasses(data.data.classes);
+        }
+      })
+      .catch(error => {
+        console.error('Failed to fetch students:', error);
+      });
+  }, []);
 
   const [filteredStudents, setFilteredStudents] = useState<Student[]>(students);
 

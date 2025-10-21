@@ -1,0 +1,348 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String
+  passwordHash  String
+  role          Role      @default(STUDENT)
+  avatar        String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // Relations
+  createdExams  Exam[]    @relation("ExamCreator")
+  attempts      Attempt[]
+  enrollments   Enrollment[]
+  submissions   Submission[] @relation("SubmissionStudent")
+  gradedSubmissions Submission[] @relation("SubmissionGrader")
+  monitoringEvents MonitoringEvent[]
+  sentMessages  Message[] @relation("MessageSender")
+  receivedMessages Message[] @relation("MessageReceiver")
+  
+  @@index([email])
+  @@index([role])
+}
+
+enum Role {
+  STUDENT
+  TEACHER
+  ADMIN
+}
+
+// Question model
+model Question {
+  id            String    @id @default(cuid())
+  title         String
+  type          QuestionType
+  question      String    @db.Text
+  options       Json?     // Array of strings for MCQ
+  correctAnswer String?   // JSON: could be number (index), string, or array
+  points        Int       @default(1)
+  tags          String[]
+  subject       String?
+  difficulty    String?   @default("medium")
+  metadata      Json?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // Relations
+  examQuestions ExamQuestion[]
+  answers       Answer[]
+  
+  @@index([type])
+  @@index([subject])
+  @@index([tags])
+}
+
+enum QuestionType {
+  MCQ
+  SHORT_ANSWER
+  ESSAY
+  TRUE_FALSE
+  MULTIPLE_SELECT
+}
+
+// Exam model
+model Exam {
+  id            String    @id @default(cuid())
+  title         String
+  description   String    @db.Text
+  duration      Int       // in minutes
+  startTime     DateTime?
+  endTime       DateTime?
+  maxAttempts   Int       @default(1)
+  status        ExamStatus @default(DRAFT)
+  settings      Json      // ExamSettings as JSON
+  passingScore  Int?
+  createdById   String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // Relations
+  createdBy     User      @relation("ExamCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  examQuestions ExamQuestion[]
+  enrollments   Enrollment[]
+  attempts      Attempt[]
+  monitoringEvents MonitoringEvent[]
+  messages      Message[]
+  
+  @@index([createdById])
+  @@index([status])
+  @@index([startTime])
+}
+
+enum ExamStatus {
+  DRAFT
+  PUBLISHED
+  ONGOING
+  COMPLETED
+  ARCHIVED
+}
+
+// ExamQuestion junction table (for ordering and randomization)
+model ExamQuestion {
+  id            String    @id @default(cuid())
+  examId        String
+  questionId    String
+  order         Int
+  randomizeOptions Boolean @default(false)
+  createdAt     DateTime  @default(now())
+  
+  // Relations
+  exam          Exam      @relation(fields: [examId], references: [id], onDelete: Cascade)
+  question      Question  @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  
+  @@unique([examId, questionId])
+  @@index([examId, order])
+}
+
+// Enrollment (students assigned to exams)
+model Enrollment {
+  id            String    @id @default(cuid())
+  examId        String
+  studentId     String
+  enrolledAt    DateTime  @default(now())
+  
+  // Relations
+  exam          Exam      @relation(fields: [examId], references: [id], onDelete: Cascade)
+  student       User      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  
+  @@unique([examId, studentId])
+  @@index([studentId])
+}
+
+// Attempt (exam session)
+model Attempt {
+  id            String    @id @default(cuid())
+  examId        String
+  studentId     String
+  startTime     DateTime  @default(now())
+  endTime       DateTime?
+  status        AttemptStatus @default(IN_PROGRESS)
+  score         Float?
+  timeSpent     Int?      // in seconds
+  ipAddress     String?
+  userAgent     String?
+  metadata      Json?     // For storing shuffled question order, etc.
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // Relations
+  exam          Exam      @relation(fields: [examId], references: [id], onDelete: Cascade)
+  student       User      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  answers       Answer[]
+  submission    Submission?
+  monitoringEvents MonitoringEvent[]
+  snapshots     Snapshot[]
+  
+  @@index([examId])
+  @@index([studentId])
+  @@index([status])
+  @@index([startTime])
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  ABANDONED
+  TERMINATED
+}
+
+// Answer (student's answer to a question in an attempt)
+model Answer {
+  id            String    @id @default(cuid())
+  attemptId     String
+  questionId    String
+  answer        Json      // Flexible: string, number, array
+  isCorrect     Boolean?
+  pointsAwarded Float?
+  timeSpent     Int?      // in seconds
+  flaggedForReview Boolean @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // Relations
+  attempt       Attempt   @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question      Question  @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  
+  @@unique([attemptId, questionId])
+  @@index([attemptId])
+}
+
+// Submission (final submission with grading)
+model Submission {
+  id            String    @id @default(cuid())
+  attemptId     String    @unique
+  studentId     String
+  submittedAt   DateTime  @default(now())
+  gradedAt      DateTime?
+  gradedById    String?
+  score         Float?
+  totalPoints   Float?
+  feedback      String?   @db.Text
+  status        SubmissionStatus @default(PENDING)
+  flagged       Boolean   @default(false)
+  flagReason    String?
+  
+  // Relations
+  attempt       Attempt   @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  student       User      @relation("SubmissionStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  gradedBy      User?     @relation("SubmissionGrader", fields: [gradedById], references: [id], onDelete: SetNull)
+  
+  @@index([studentId])
+  @@index([status])
+  @@index([submittedAt])
+}
+
+enum SubmissionStatus {
+  PENDING
+  GRADED
+  NEEDS_REVIEW
+  FLAGGED
+}
+
+// MonitoringEvent (proctoring events)
+model MonitoringEvent {
+  id            String    @id @default(cuid())
+  examId        String
+  studentId     String
+  attemptId     String?
+  type          EventType
+  severity      Severity  @default(LOW)
+  description   String    @db.Text
+  metadata      Json?     // Additional context
+  timestamp     DateTime  @default(now())
+  
+  // Relations
+  exam          Exam      @relation(fields: [examId], references: [id], onDelete: Cascade)
+  student       User      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  attempt       Attempt?  @relation(fields: [attemptId], references: [id], onDelete: SetNull)
+  
+  @@index([examId])
+  @@index([studentId])
+  @@index([attemptId])
+  @@index([timestamp])
+  @@index([type])
+  @@index([severity])
+}
+
+enum EventType {
+  TAB_SWITCH
+  WINDOW_BLUR
+  COPY_PASTE
+  RIGHT_CLICK
+  FULLSCREEN_EXIT
+  SUSPICIOUS_BEHAVIOR
+  MULTIPLE_FACES
+  NO_FACE_DETECTED
+  FACE_CHANGED
+  WEBCAM_DISABLED
+  WEBCAM_ENABLED
+  EXAM_STARTED
+  EXAM_PAUSED
+  EXAM_RESUMED
+  EXAM_SUBMITTED
+  UNAUTHORIZED_DEVICE
+  NETWORK_ISSUE
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// Snapshot (webcam/screen captures)
+model Snapshot {
+  id            String    @id @default(cuid())
+  attemptId     String
+  url           String    // S3 URL or local path
+  storageKey    String    // S3 key or file identifier
+  type          SnapshotType @default(WEBCAM)
+  size          Int?      // in bytes
+  metadata      Json?
+  createdAt     DateTime  @default(now())
+  
+  // Relations
+  attempt       Attempt   @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  
+  @@index([attemptId])
+  @@index([createdAt])
+}
+
+enum SnapshotType {
+  WEBCAM
+  SCREEN
+  DOCUMENT
+}
+
+// Message (teacher-student communication during exam)
+model Message {
+  id            String    @id @default(cuid())
+  examId        String
+  fromUserId    String
+  toUserId      String?   // null means broadcast to all
+  body          String    @db.Text
+  read          Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  
+  // Relations
+  exam          Exam      @relation(fields: [examId], references: [id], onDelete: Cascade)
+  fromUser      User      @relation("MessageSender", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUser        User?     @relation("MessageReceiver", fields: [toUserId], references: [id], onDelete: SetNull)
+  
+  @@index([examId])
+  @@index([fromUserId])
+  @@index([toUserId])
+  @@index([createdAt])
+}
+
+// AuditLog (for tracking critical actions)
+model AuditLog {
+  id            String    @id @default(cuid())
+  userId        String?
+  action        String
+  entity        String
+  entityId      String?
+  changes       Json?
+  ipAddress     String?
+  userAgent     String?
+  timestamp     DateTime  @default(now())
+  
+  @@index([userId])
+  @@index([entity])
+  @@index([timestamp])
+}

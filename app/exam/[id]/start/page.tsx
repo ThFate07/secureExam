@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../..
 import { Alert, AlertDescription } from "../../../components/ui/alert";
 import { CheckCircle, AlertTriangle, Camera, ArrowLeft, Play } from "lucide-react";
 import { useAuth } from "../../../hooks/useAuth";
-import { demoExams } from "../../../lib/demoData";
+import { api } from "../../../lib/api/client";
 
 export default function StartExamPage() {
   const router = useRouter();
@@ -15,21 +15,46 @@ export default function StartExamPage() {
   const { user } = useAuth();
   const examId = params.id as string;
   
-  interface DemoExamQuestion { id: string; points: number; [k: string]: unknown }
-  interface DemoExam { id: string; title: string; description: string; duration: number; totalQuestions: number; questions: DemoExamQuestion[] }
-  const [exam, setExam] = useState<DemoExam | null>(null);
+  interface ExamQuestion { id: string; points: number; [k: string]: unknown }
+  interface ExamData { id: string; title: string; description: string; duration: number; totalQuestions: number; questions: ExamQuestion[] }
+  const [exam, setExam] = useState<ExamData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [cameraPermission, setCameraPermission] = useState<boolean | null>(null);
   const [fullscreenSupported, setFullscreenSupported] = useState(false);
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    // Find the exam by ID
-    const foundExam = demoExams.find(e => e.id === `exam_${examId}`);
-    if (foundExam) {
-      setExam(foundExam);
-    }
-    setLoading(false);
+    // Fetch exam from API (without correct answers for security)
+    const fetchExam = async () => {
+      try {
+        setLoading(true);
+        const examData = await api.exams.get(examId);
+        
+        if (examData) {
+          setExam({
+            id: examData.id,
+            title: examData.title,
+            description: examData.description || '',
+            duration: examData.duration,
+            totalQuestions: examData.questions?.length || 0,
+            questions: examData.questions?.map((q: ExamQuestion) => ({ 
+              id: q.id, 
+              points: q.points 
+            })) || []
+          });
+        } else {
+          setError('Exam not found');
+        }
+      } catch (err) {
+        console.error('Failed to fetch exam:', err);
+        setError(err instanceof Error ? err.message : 'Failed to load exam');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchExam();
 
     // Check fullscreen support
     setFullscreenSupported(!!document.documentElement.requestFullscreen);
@@ -67,20 +92,21 @@ export default function StartExamPage() {
     setIsReady(cameraPermission === true && fullscreenSupported);
   }, [cameraPermission, fullscreenSupported]);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
-
-  if (!exam) {
+  if (loading || !exam) {
+    if (loading) {
+      return (
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
+        </div>
+      );
+    }
+    
+    // Exam not found
     return (
       <div className="min-h-screen bg-gray-50 p-6">
         <div className="max-w-2xl mx-auto">
           <Alert variant="destructive">
-            <AlertDescription>Exam not found.</AlertDescription>
+            <AlertDescription>{error || 'Exam not found.'}</AlertDescription>
           </Alert>
           <Button
             variant="outline"
@@ -126,7 +152,7 @@ export default function StartExamPage() {
                 <span className="font-medium">Questions:</span> {exam.totalQuestions}
               </div>
               <div>
-                <span className="font-medium">Total Points:</span> {exam.questions.reduce((sum: number, q: DemoExamQuestion) => sum + q.points, 0)}
+                <span className="font-medium">Total Points:</span> {exam.questions.reduce((sum: number, q: ExamQuestion) => sum + q.points, 0)}
               </div>
               <div>
                 <span className="font-medium">Student:</span> {user?.name}

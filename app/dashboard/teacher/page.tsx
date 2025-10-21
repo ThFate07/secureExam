@@ -35,63 +35,27 @@ export default function TeacherDashboard() {
       return;
     }
 
-    // Mock data for demonstration
-    const mockExams: Exam[] = [
-      {
-        id: "1",
-        title: "Mathematics Final Exam",
-        description: "Comprehensive mathematics assessment covering algebra, geometry, and calculus",
-        teacherId: user?.id || "",
-        duration: 120,
-        startTime: new Date("2025-09-25T10:00:00"),
-        endTime: new Date("2025-09-25T12:00:00"),
-        maxAttempts: 1,
-        questions: [],
-        settings: {
-          shuffleQuestions: true,
-          shuffleOptions: true,
-          showResultsImmediately: false,
-          allowReview: true,
-          preventTabSwitching: true,
-          requireWebcam: true,
-          enableScreenMonitoring: true,
-          lockdownBrowser: true,
-        },
-        status: "published",
-        createdAt: new Date("2025-09-20"),
-      },
-      {
-        id: "2",
-        title: "Physics Quiz - Chapter 5",
-        description: "Quick assessment on electromagnetic waves and optics",
-        teacherId: user?.id || "",
-        duration: 45,
-        startTime: new Date("2025-09-23T14:00:00"),
-        endTime: new Date("2025-09-23T14:45:00"),
-        maxAttempts: 2,
-        questions: [],
-        settings: {
-          shuffleQuestions: false,
-          shuffleOptions: true,
-          showResultsImmediately: true,
-          allowReview: true,
-          preventTabSwitching: true,
-          requireWebcam: false,
-          enableScreenMonitoring: false,
-          lockdownBrowser: false,
-        },
-        status: "draft",
-        createdAt: new Date("2025-09-21"),
-      },
-    ];
-
-    setExams(mockExams);
-    setStats({
-      totalExams: mockExams.length,
-      activeExams: mockExams.filter(e => e.status === 'published').length,
-      totalStudents: 45,
-      completedExams: 12,
-    });
+    if (isAuthenticated && user?.role === 'teacher') {
+      // Fetch real data from API
+      fetch('/api/teacher/dashboard')
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) {
+            const fetchedExams = data.data.exams.map((exam: Exam) => ({
+              ...exam,
+              startTime: exam.startTime ? new Date(exam.startTime) : null,
+              endTime: exam.endTime ? new Date(exam.endTime) : null,
+              createdAt: new Date(exam.createdAt),
+              questions: [],
+            }));
+            setExams(fetchedExams);
+            setStats(data.data.stats);
+          }
+        })
+        .catch(error => {
+          console.error('Failed to fetch dashboard data:', error);
+        });
+    }
   }, [user, isAuthenticated, loading, router]);
 
   const getStatusColor = (status: string) => {
@@ -102,6 +66,15 @@ export default function TeacherDashboard() {
       case 'completed': return 'bg-gray-100 text-gray-800';
       default: return 'bg-gray-100 text-gray-800';
     }
+  };
+
+  const isExamActive = (exam: Exam) => {
+    const now = new Date();
+    const isOngoing = exam.status === 'ongoing';
+    const isPublishedAndWithinTime = exam.status === 'published' && 
+      now >= exam.startTime && now <= exam.endTime;
+    
+    return isOngoing || isPublishedAndWithinTime;
   };
 
   const formatDate = (date: Date) => {
@@ -243,68 +216,76 @@ export default function TeacherDashboard() {
         </Button>
       </div>
 
-      {/* Recent Exams */}
+      {/* Active Exams */}
       <Card>
         <CardHeader>
-          <CardTitle>Your Exams</CardTitle>
+          <CardTitle>Active Exams</CardTitle>
           <CardDescription>
-            Manage and monitor your examinations
+            Currently running and available examinations
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {exams.map((exam) => (
-              <div key={exam.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center space-x-3">
-                      <h3 className="font-semibold text-lg">{exam.title}</h3>
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(exam.status)}`}>
-                        {exam.status}
-                      </span>
-                    </div>
-                    <p className="text-gray-600 text-sm mt-1">{exam.description}</p>
-                    <div className="flex items-center space-x-4 mt-2 text-sm text-gray-500">
-                      <div className="flex items-center space-x-1">
-                        <Clock className="h-4 w-4" />
-                        <span>{exam.duration} minutes</span>
+            {exams.filter(isExamActive).length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                <Clock className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                <h3 className="text-lg font-medium mb-2">No Active Exams</h3>
+                <p className="text-sm">You don&apos;t have any active exams at the moment.</p>
+              </div>
+            ) : (
+              exams.filter(isExamActive).map((exam) => (
+                <div key={exam.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center space-x-3">
+                        <h3 className="font-semibold text-lg">{exam.title}</h3>
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(exam.status)}`}>
+                          {exam.status}
+                        </span>
                       </div>
-                      <div>Start: {formatDate(exam.startTime)}</div>
-                      <div>End: {formatDate(exam.endTime)}</div>
+                      <p className="text-gray-600 text-sm mt-1">{exam.description}</p>
+                      <div className="flex items-center space-x-4 mt-2 text-sm text-gray-500">
+                        <div className="flex items-center space-x-1">
+                          <Clock className="h-4 w-4" />
+                          <span>{exam.duration} minutes</span>
+                        </div>
+                        <div>Start: {formatDate(exam.startTime)}</div>
+                        <div>End: {formatDate(exam.endTime)}</div>
+                      </div>
                     </div>
-                  </div>
-                  
-                  <div className="flex items-center space-x-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}`)}
-                    >
-                      <Settings className="h-4 w-4 mr-1" />
-                      Edit
-                    </Button>
                     
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}/monitor`)}
-                    >
-                      <Eye className="h-4 w-4 mr-1" />
-                      Monitor
-                    </Button>
-                    
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}/submissions`)}
-                    >
-                      <FileText className="h-4 w-4 mr-1" />
-                      Results
-                    </Button>
+                    <div className="flex items-center space-x-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}`)}
+                      >
+                        <Settings className="h-4 w-4 mr-1" />
+                        Edit
+                      </Button>
+                      
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}/monitor`)}
+                      >
+                        <Eye className="h-4 w-4 mr-1" />
+                        Monitor
+                      </Button>
+                      
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}/submissions`)}
+                      >
+                        <FileText className="h-4 w-4 mr-1" />
+                        Results
+                      </Button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </CardContent>
       </Card>

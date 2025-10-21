@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Button } from '../../ui/button';
 import { Input } from '../../ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '../../ui/card';
@@ -10,101 +10,93 @@ import { Label } from '../../ui/label';
 import { Textarea } from '../../ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../ui/select';
 import { Plus, Search, Filter, Edit3, Trash2, BookOpen, Tag, ChevronDown, ChevronUp } from 'lucide-react';
-import { Question, QuestionFilter } from '../../../types/question';
+import { Question } from '../../../types/question';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface QuestionBankProps {
   teacherId: string;
 }
 
+const DEMO_QUESTIONS: Question[] = [
+  {
+    id: '1',
+    title: 'Basic JavaScript Variables',
+    type: 'multiple-choice',
+    question: 'Which of the following is the correct way to declare a variable in JavaScript?',
+    options: ['var myVar;', 'variable myVar;', 'declare myVar;', 'let myVar = undefined;'],
+    correctAnswer: 'var myVar;',
+    points: 2,
+    subject: 'JavaScript',
+    tags: ['variables', 'syntax', 'basics'],
+    explanation: 'The var keyword is used to declare variables in JavaScript.',
+    createdAt: new Date('2024-01-15'),
+    updatedAt: new Date('2024-01-15'),
+    createdBy: 'demo-teacher'
+  },
+  {
+    id: '2',
+    title: 'React Hooks Understanding',
+    type: 'true-false',
+    question: 'useState can only be used in class components.',
+    options: ['True', 'False'],
+    correctAnswer: 'False',
+    points: 1,
+    subject: 'React',
+    tags: ['hooks', 'useState', 'components'],
+    explanation: 'useState is a hook that can only be used in functional components, not class components.',
+    createdAt: new Date('2024-01-16'),
+    updatedAt: new Date('2024-01-16'),
+    createdBy: 'demo-teacher'
+  },
+  {
+    id: '3',
+    title: 'Algorithm Complexity',
+    type: 'short-answer',
+    question: 'Explain the time complexity of a binary search algorithm and justify your answer.',
+    correctAnswer: 'O(log n) - because we eliminate half of the search space in each iteration',
+    points: 5,
+    subject: 'Algorithms',
+    tags: ['complexity', 'binary-search', 'big-o'],
+    explanation: 'Binary search has O(log n) time complexity because it divides the search space in half with each comparison.',
+    createdAt: new Date('2024-01-17'),
+    updatedAt: new Date('2024-01-17'),
+    createdBy: 'demo-teacher'
+  }
+];
+
+type QuestionFilters = {
+  type?: Question['type'];
+  subject?: string;
+};
+
 const QuestionBank: React.FC<QuestionBankProps> = ({ teacherId }) => {
-  const [questions, setQuestions] = useState<Question[]>([]);
-  const [filteredQuestions, setFilteredQuestions] = useState<Question[]>([]);
+  const [questions, setQuestions] = useState<Question[]>(() =>
+    DEMO_QUESTIONS.map((question) => ({ ...question, createdBy: teacherId || question.createdBy }))
+  );
   const [searchTerm, setSearchTerm] = useState('');
-  const [filters, setFilters] = useState<QuestionFilter>({});
+  const [filters, setFilters] = useState<QuestionFilters>({});
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [expandedQuestions, setExpandedQuestions] = useState<Set<string>>(new Set());
 
-  // Mock data for development
-  useEffect(() => {
-    const mockQuestions: Question[] = [
-      {
-        id: '1',
-        title: 'Basic JavaScript Variables',
-        type: 'multiple-choice',
-        question: 'Which of the following is the correct way to declare a variable in JavaScript?',
-        options: ['var myVar;', 'variable myVar;', 'declare myVar;', 'let myVar = undefined;'],
-        correctAnswer: 'var myVar;',
-        points: 2,
-        subject: 'JavaScript',
-        tags: ['variables', 'syntax', 'basics'],
-        explanation: 'The var keyword is used to declare variables in JavaScript.',
-        createdAt: new Date('2024-01-15'),
-        updatedAt: new Date('2024-01-15'),
-        createdBy: teacherId
-      },
-      {
-        id: '2',
-        title: 'React Hooks Understanding',
-        type: 'true-false',
-        question: 'useState can only be used in class components.',
-        options: ['True', 'False'],
-        correctAnswer: 'False',
-        points: 1,
-        subject: 'React',
-        tags: ['hooks', 'useState', 'components'],
-        explanation: 'useState is a hook that can only be used in functional components, not class components.',
-        createdAt: new Date('2024-01-16'),
-        updatedAt: new Date('2024-01-16'),
-        createdBy: teacherId
-      },
-      {
-        id: '3',
-        title: 'Algorithm Complexity',
-        type: 'short-answer',
-        question: 'Explain the time complexity of a binary search algorithm and justify your answer.',
-        correctAnswer: 'O(log n) - because we eliminate half of the search space in each iteration',
-        points: 5,
-        subject: 'Algorithms',
-        tags: ['complexity', 'binary-search', 'big-o'],
-        explanation: 'Binary search has O(log n) time complexity because it divides the search space in half with each comparison.',
-        createdAt: new Date('2024-01-17'),
-        updatedAt: new Date('2024-01-17'),
-        createdBy: teacherId
-      }
-    ];
-    setQuestions(mockQuestions);
-    setFilteredQuestions(mockQuestions);
-  }, [teacherId]);
+  const filteredQuestions = useMemo(() => {
+    return questions.filter((question) => {
+      const normalizedSearch = searchTerm.trim().toLowerCase();
+      const matchesSearch = normalizedSearch
+        ? [question.title, question.question, question.subject, question.tags.join(' ')].some((field) =>
+            field.toLowerCase().includes(normalizedSearch)
+          )
+        : true;
 
-  // Filter and search logic
-  useEffect(() => {
-    let filtered = questions;
+      const matchesType = filters.type ? question.type === filters.type : true;
+      const matchesSubject = filters.subject
+        ? question.subject.toLowerCase() === filters.subject.toLowerCase()
+        : true;
 
-    // Search filter
-    if (searchTerm) {
-      filtered = filtered.filter(q => 
-        q.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        q.question.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        q.subject.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        q.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase()))
-      );
-    }
-
-    // Type filter
-    if (filters.type && filters.type.length > 0) {
-      filtered = filtered.filter(q => filters.type!.includes(q.type));
-    }
-
-    // Subject filter
-    if (filters.subject && filters.subject.length > 0) {
-      filtered = filtered.filter(q => filters.subject!.includes(q.subject));
-    }
-
-    setFilteredQuestions(filtered);
-  }, [searchTerm, filters, questions]);
+      return matchesSearch && matchesType && matchesSubject;
+    });
+  }, [filters.subject, filters.type, questions, searchTerm]);
 
   const toggleQuestionExpansion = (questionId: string) => {
     const newExpanded = new Set(expandedQuestions);
@@ -144,7 +136,7 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ teacherId }) => {
             </Button>
           </DialogTrigger>
           <DialogContent className="max-w-4xl max-h-[90vh] bg-white border-2 border-gray-200 shadow-2xl overflow-hidden">
-            <div className="h-full max-h-[calc(90vh-8rem)] overflow-y-scroll modal-scrollbar scroll-smooth modal-content" style={{ transform: 'translateZ(0)', WebkitOverflowScrolling: 'touch' }}>
+            <div className="h-full max-h-[calc(90vh-8rem)] overflow-y-scroll modal-scrollbar scroll-smooth modal-content">
               <div className="p-6">
                 <DialogHeader className="border-b border-gray-100 pb-6 mb-6">
                   <DialogTitle className="text-2xl font-bold text-gray-900 tracking-tight">
@@ -211,9 +203,12 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ teacherId }) => {
                 >
                   <div>
                     <Label htmlFor="type-filter">Question Type</Label>
-                    <Select value={filters.type?.[0] || ""} onValueChange={(value) => 
-                      setFilters(prev => ({ ...prev, type: value ? [value] : undefined }))
-                    }>
+                    <Select
+                      value={filters.type || ""}
+                      onValueChange={(value) =>
+                        setFilters((prev) => ({ ...prev, type: value ? (value as Question['type']) : undefined }))
+                      }
+                    >
                       <SelectTrigger className="bg-white border border-gray-300 hover:border-gray-400 focus:border-gray-600 transition-colors duration-200">
                         <SelectValue placeholder="All types" />
                       </SelectTrigger>
@@ -228,9 +223,10 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ teacherId }) => {
 
                   <div>
                     <Label htmlFor="subject-filter">Subject</Label>
-                    <Select value={filters.subject?.[0] || ""} onValueChange={(value) => 
-                      setFilters(prev => ({ ...prev, subject: value ? [value] : undefined }))
-                    }>
+                    <Select
+                      value={filters.subject || ""}
+                      onValueChange={(value) => setFilters((prev) => ({ ...prev, subject: value || undefined }))}
+                    >
                       <SelectTrigger className="bg-white border border-gray-300 hover:border-gray-400 focus:border-gray-600 transition-colors duration-200">
                         <SelectValue placeholder="All subjects" />
                       </SelectTrigger>

@@ -1,13 +1,16 @@
 "use client";
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
+import { Textarea } from '../../../components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { ArrowLeft, Save, BookOpen, Timer, Info } from 'lucide-react';
-import { useExamStore } from '../../../hooks/useExamStore';
+import { ExamSecuritySettings } from '../../../lib/examStore';
+import SecuritySettings from '../../../components/exam/SecuritySettings';
+import { api } from '../../../lib/api/client';
 
 interface FormState {
   title: string;
@@ -15,27 +18,83 @@ interface FormState {
   duration: number; // minutes
   scheduleEnabled: boolean;
   scheduledFor: string; // local datetime string (YYYY-MM-DDTHH:MM)
+  securitySettings: ExamSecuritySettings;
+}
+
+interface QuestionData {
+  id: string;
+  question: string;
+  options?: string[] | unknown;
+  correctAnswer?: number | string;
+  points: number;
+  type?: string;
+  title?: string;
 }
 
 const CreateExamPage: React.FC = () => {
   const router = useRouter();
-  const { createExam } = useExamStore();
-  const [form, setForm] = useState<FormState>({ title: '', description: '', duration: 30, scheduleEnabled: false, scheduledFor: '' });
+  
+  const defaultSecuritySettings: ExamSecuritySettings = {
+    preventTabSwitching: false,
+    requireWebcam: false,
+    enableScreenMonitoring: false,
+    lockdownBrowser: false,
+    disableRightClick: false,
+    disableCopyPaste: false,
+    shuffleQuestions: false,
+    shuffleOptions: false,
+    showResultsImmediately: true,
+    allowReview: true,
+    maxTabSwitchWarnings: 3,
+    enableFullscreenMode: false,
+    disableDevTools: false,
+  };
+
+  const [form, setForm] = useState<FormState>({
+    title: '',
+    description: '',
+    duration: 30,
+    scheduleEnabled: false,
+    scheduledFor: '',
+    securitySettings: defaultSecuritySettings,
+  });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
   const [search, setSearch] = useState('');
+  const [questionsFromDB, setQuestionsFromDB] = useState<QuestionData[]>([]);
+  const [loadingQuestions, setLoadingQuestions] = useState(true);
 
-  // Demo sample questions (could be replaced by real bank)
+  // Fetch questions from database
+  useEffect(() => {
+    const fetchQuestions = async () => {
+      try {
+        setLoadingQuestions(true);
+        const data = await api.questions.list();
+        setQuestionsFromDB(data.questions || []);
+      } catch (err) {
+        console.error('Failed to fetch questions:', err);
+        // Fallback to sample questions if API fails
+      } finally {
+        setLoadingQuestions(false);
+      }
+    };
+    fetchQuestions();
+  }, []);
+
+  // Demo sample questions (fallback)
   const sampleQuestions = useMemo(() => ([
-    { id: 'q_math_1', question: 'What is 12 + 15?', options: ['25', '27', '28', '30'], correctAnswer: 1, points: 1 },
-    { id: 'q_math_2', question: 'Derivative of x^2 is?', options: ['x', '2x', 'x^2', '2'], correctAnswer: 1, points: 1 },
-    { id: 'q_sci_1', question: 'Water chemical formula?', options: ['H2O', 'O2', 'CO2', 'NaCl'], correctAnswer: 0, points: 1 },
-    { id: 'q_hist_1', question: 'Who was the first President of the USA?', options: ['Abraham Lincoln', 'John Adams', 'George Washington', 'Thomas Jefferson'], correctAnswer: 2, points: 1 },
-    { id: 'q_cs_1', question: 'Which data structure uses FIFO?', options: ['Stack', 'Queue', 'Tree', 'Graph'], correctAnswer: 1, points: 1 },
+    { id: 'q_math_1', question: 'What is 12 + 15?', options: ['25', '27', '28', '30'], correctAnswer: 1, points: 1, type: 'MCQ' },
+    { id: 'q_math_2', question: 'Derivative of x^2 is?', options: ['x', '2x', 'x^2', '2'], correctAnswer: 1, points: 1, type: 'MCQ' },
+    { id: 'q_sci_1', question: 'Water chemical formula?', options: ['H2O', 'O2', 'CO2', 'NaCl'], correctAnswer: 0, points: 1, type: 'MCQ' },
+    { id: 'q_hist_1', question: 'Who was the first President of the USA?', options: ['Abraham Lincoln', 'John Adams', 'George Washington', 'Thomas Jefferson'], correctAnswer: 2, points: 1, type: 'MCQ' },
+    { id: 'q_cs_1', question: 'Which data structure uses FIFO?', options: ['Stack', 'Queue', 'Tree', 'Graph'], correctAnswer: 1, points: 1, type: 'MCQ' },
   ]), []);
 
-  const filteredQuestions = sampleQuestions.filter(q =>
+  // Use database questions if available, otherwise use sample questions
+  const availableQuestions = questionsFromDB.length > 0 ? questionsFromDB : sampleQuestions;
+
+  const filteredQuestions = availableQuestions.filter(q =>
     q.question.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -43,7 +102,7 @@ const CreateExamPage: React.FC = () => {
     setSelectedQuestionIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   };
 
-  const onChange = (field: keyof FormState, value: string | boolean) => {
+  const onChange = (field: keyof FormState, value: string | boolean | ExamSecuritySettings) => {
     setForm(prev => {
       if (field === 'scheduleEnabled') {
         const enabled = Boolean(value);
@@ -53,9 +112,14 @@ const CreateExamPage: React.FC = () => {
     });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const onSecuritySettingsChange = (securitySettings: ExamSecuritySettings) => {
+    onChange('securitySettings', securitySettings);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    
     if (!form.title.trim()) {
       setError('Title is required');
       return;
@@ -64,6 +128,11 @@ const CreateExamPage: React.FC = () => {
       setError('Duration must be greater than 0');
       return;
     }
+    if (selectedQuestionIds.length === 0) {
+      setError('Please select at least one question');
+      return;
+    }
+    
     // Validate schedule
     let scheduledForIso: string | undefined;
     if (form.scheduleEnabled) {
@@ -85,20 +154,48 @@ const CreateExamPage: React.FC = () => {
     }
 
     setSaving(true);
-    const questions = sampleQuestions
-      .filter(q => selectedQuestionIds.includes(q.id))
-      .map(q => ({ id: q.id, question: q.question, options: q.options, correctAnswer: q.correctAnswer, points: q.points }));
+    
+    try {
+      // Prepare exam data for API
+      const examData: Record<string, unknown> = {
+        title: form.title.trim(),
+        description: form.description.trim(),
+        duration: form.duration,
+        maxAttempts: 1,
+        questionIds: selectedQuestionIds,
+        settings: {
+          shuffleQuestions: form.securitySettings.shuffleQuestions,
+          shuffleOptions: form.securitySettings.shuffleOptions,
+          showResultsImmediately: form.securitySettings.showResultsImmediately,
+          allowReview: form.securitySettings.allowReview,
+          preventTabSwitching: form.securitySettings.preventTabSwitching,
+          requireWebcam: form.securitySettings.requireWebcam,
+          enableScreenMonitoring: form.securitySettings.enableScreenMonitoring,
+          lockdownBrowser: form.securitySettings.lockdownBrowser,
+          disableRightClick: form.securitySettings.disableRightClick,
+          disableCopyPaste: form.securitySettings.disableCopyPaste,
+          maxTabSwitchWarnings: form.securitySettings.maxTabSwitchWarnings,
+          enableFullscreenMode: form.securitySettings.enableFullscreenMode,
+          disableDevTools: form.securitySettings.disableDevTools,
+        },
+      };
 
-    const created = createExam({
-      title: form.title.trim(),
-      description: form.description.trim(),
-      duration: form.duration,
-      status: 'draft',
-      questions,
-      scheduledFor: scheduledForIso,
-    });
-    setSaving(false);
-    router.push(`/dashboard/teacher/exam/${created.id}`);
+      // Only add optional fields if they have values
+      if (scheduledForIso) {
+        examData.startTime = scheduledForIso;
+      }
+
+      // Create exam in database via API
+      const createdExam = await api.exams.create(examData);
+      
+      // Navigate to the exam page
+      router.push(`/dashboard/teacher/exam/${createdExam.id}`);
+    } catch (err) {
+      console.error('Failed to create exam:', err);
+      setError(err instanceof Error ? err.message : 'Failed to create exam. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -138,8 +235,14 @@ const CreateExamPage: React.FC = () => {
                 </div>
 
                 <div>
-                  <Label htmlFor="description">Description</Label>
-                  <Input id="description" placeholder="Enter a detailed description of the exam..." value={form.description} onChange={e => onChange('description', e.target.value)} />
+                  <Label htmlFor="description">Description (Optional)</Label>
+                  <Textarea 
+                    id="description" 
+                    placeholder="Enter a detailed description of the exam (optional)..." 
+                    value={form.description} 
+                    onChange={e => onChange('description', e.target.value)}
+                    rows={3}
+                  />
                 </div>
 
                 <div>
@@ -180,6 +283,11 @@ const CreateExamPage: React.FC = () => {
                 )}
               </CardContent>
             </Card>
+
+            <SecuritySettings
+              settings={form.securitySettings}
+              onChange={onSecuritySettingsChange}
+            />
           </div>
 
           <div className="space-y-6">
@@ -193,8 +301,11 @@ const CreateExamPage: React.FC = () => {
                   <Input id="search" placeholder="Find question..." value={search} onChange={e => setSearch(e.target.value)} />
                 </div>
                 <div className="max-h-72 overflow-auto space-y-2 pr-1">
-                  {filteredQuestions.map(q => {
+                  {loadingQuestions ? (
+                    <p className="text-sm text-gray-500">Loading questions...</p>
+                  ) : filteredQuestions.map(q => {
                     const selected = selectedQuestionIds.includes(q.id);
+                    const displayOptions = Array.isArray(q.options) ? q.options : [];
                     return (
                       <button
                         type="button"
@@ -206,9 +317,9 @@ const CreateExamPage: React.FC = () => {
                           <span className="font-medium text-sm">{q.question}</span>
                           {selected && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-600 text-white">Selected</span>}
                         </div>
-                        {q.options && (
+                        {displayOptions.length > 0 && (
                           <ul className="list-disc ml-5 text-xs text-gray-600 space-y-0.5">
-                            {q.options.slice(0,4).map((o,i) => <li key={i}>{o}</li>)}
+                            {displayOptions.slice(0,4).map((o: string, i: number) => <li key={i}>{o}</li>)}
                           </ul>
                         )}
                         <div className="text-xs text-gray-500">Points: {q.points}</div>

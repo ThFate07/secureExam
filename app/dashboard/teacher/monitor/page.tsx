@@ -12,7 +12,6 @@ import {
   AlertTriangle, 
   MessageCircle, 
   Camera, 
-  Clock,
   Flag,
   Activity,
   Shield
@@ -27,7 +26,6 @@ export default function TeacherMonitoringDashboard() {
   const [selectedStudent, setSelectedStudent] = useState<MonitoringData | null>(null);
   const [message, setMessage] = useState("");
   const unsubRef = useRef<(() => void) | null>(null);
-  const demoSeededRef = useRef(false);
 
   const handleIncomingEvent = useCallback((event: MonitoringEvent) => {
     setActiveStudents(prev => {
@@ -90,52 +88,10 @@ export default function TeacherMonitoringDashboard() {
       unsubRef.current = subscribeMonitoringEvents(handleIncomingEvent);
     }
 
-    // Seed demo data after 800ms if still empty and not already seeded
-    const seedTimer = setTimeout(() => {
-      if (!demoSeededRef.current && activeStudents.length === 0) {
-        demoSeededRef.current = true;
-        const now = Date.now();
-        const demo: MonitoringData[] = [
-          {
-            studentId: 'demo_student_1',
-            examId: '1',
-            attemptId: '1-demo_student_1',
-            isActive: true,
-            lastActivity: new Date(now - 30_000),
-            webcamEnabled: true,
-            currentQuestion: 2,
-            flaggedActivities: [
-              {
-                id: 'dflag1',
-                type: 'tab-switch',
-                timestamp: new Date(now - 60_000),
-                description: 'Tab switch detected',
-                severity: 'medium',
-              },
-            ],
-            warningsCount: 1,
-            isDemo: true,
-          },
-          {
-            studentId: 'demo_student_2',
-            examId: '1',
-            attemptId: '1-demo_student_2',
-            isActive: true,
-            lastActivity: new Date(now - 10_000),
-            webcamEnabled: false,
-            currentQuestion: 4,
-            flaggedActivities: [],
-            warningsCount: 0,
-            isDemo: true,
-          },
-        ];
-        setActiveStudents(demo);
-      }
-    }, 800);
+    // No demo data seeding - real data will come from monitoring events
     
     return () => {
       unsubRef.current?.();
-      clearTimeout(seedTimer);
     };
   }, [user, isAuthenticated, loading, router, handleIncomingEvent, activeStudents.length]);
 
@@ -148,14 +104,26 @@ export default function TeacherMonitoringDashboard() {
     return 'suspicious-behavior';
   };
 
+  const [studentNames, setStudentNames] = useState<Record<string, string>>({});
+
+  // Fetch student names when needed
+  useEffect(() => {
+    const uniqueStudentIds = [...new Set(activeStudents.map(s => s.studentId))];
+    const missingIds = uniqueStudentIds.filter(id => !studentNames[id]);
+    
+    if (missingIds.length > 0) {
+      // In a real implementation, you would fetch from /api/users or similar
+      // For now, we'll set the IDs as names
+      const newNames = { ...studentNames };
+      missingIds.forEach(id => {
+        newNames[id] = `Student ${id.slice(0, 8)}`;
+      });
+      setStudentNames(newNames);
+    }
+  }, [activeStudents, studentNames]);
+
   const getStudentName = (studentId: string) => {
-    // Mock student names
-    const names = {
-      student1: "Alice Johnson",
-      student2: "Bob Smith",
-      student3: "Carol Davis",
-    };
-    return names[studentId as keyof typeof names] || studentId;
+    return studentNames[studentId] || `Student ${studentId.slice(0, 8)}`;
   };
 
   const getSeverityColor = (severity: string) => {

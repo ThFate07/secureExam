@@ -1,34 +1,225 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useAuth } from "../../hooks/useAuth";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button } from "../../components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
-import { 
-  BookOpen, 
-  Clock, 
+import {
+  BookOpen,
+  Clock,
   Calendar,
   CheckCircle,
   PlayCircle,
   AlertCircle,
   Trophy,
-  Target
+  Target,
 } from "lucide-react";
-import { Exam, ExamAttempt } from "../../types";
+import { useAuth } from "../../hooks/useAuth";
+import { Button } from "../../components/ui/button";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
+import api from "../../lib/api/client";
+import { ExamSettings } from "../../types";
+
+type ExamStatusType = "draft" | "published" | "ongoing" | "completed" | "archived";
+type AttemptStatusType = "in-progress" | "submitted" | "abandoned" | "terminated";
+
+interface DashboardExam {
+  id: string;
+  title: string;
+  description: string;
+  teacherId: string;
+  duration: number;
+  startTime: Date | null;
+  endTime: Date | null;
+  maxAttempts: number;
+  settings: ExamSettings;
+  status: ExamStatusType;
+  createdAt: Date | null;
+}
+
+interface DashboardAttempt {
+  id: string;
+  examId: string;
+  examTitle: string;
+  studentId: string;
+  startTime: Date | null;
+  endTime: Date | null;
+  score: number | null;
+  status: AttemptStatusType;
+}
+
+interface DashboardStats {
+  totalExams: number;
+  completedExams: number;
+  averageScore: number;
+  upcomingExams: number;
+}
+
+interface ApiExam {
+  id: string;
+  title: string;
+  description: string;
+  teacherId: string;
+  duration: number;
+  startTime: string | null;
+  endTime: string | null;
+  maxAttempts: number;
+  settings?: Partial<ExamSettings> | null;
+  status: ExamStatusType;
+  createdAt: string;
+}
+
+interface ApiAttempt {
+  id: string;
+  examId: string;
+  examTitle: string;
+  studentId: string;
+  startTime: string;
+  endTime: string | null;
+  score: number | null;
+  status: AttemptStatusType;
+}
+
+interface StudentDashboardResponse {
+  availableExams: ApiExam[];
+  upcomingExams: ApiExam[];
+  completedAttempts: ApiAttempt[];
+  stats: DashboardStats;
+}
+
+const DEFAULT_STATS: DashboardStats = {
+  totalExams: 0,
+  completedExams: 0,
+  averageScore: 0,
+  upcomingExams: 0,
+};
+
+const DEFAULT_SETTINGS: ExamSettings = {
+  shuffleQuestions: false,
+  shuffleOptions: false,
+  showResultsImmediately: false,
+  allowReview: false,
+  preventTabSwitching: false,
+  requireWebcam: false,
+  enableScreenMonitoring: false,
+  lockdownBrowser: false,
+};
+
+const safeDate = (value: string | null | undefined): Date | null => {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const parseExam = (exam: ApiExam): DashboardExam => {
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    ...(exam.settings ?? {}),
+  } as ExamSettings;
+
+  return {
+    id: exam.id,
+    title: exam.title,
+    description: exam.description,
+    teacherId: exam.teacherId,
+    duration: exam.duration,
+    startTime: safeDate(exam.startTime),
+    endTime: safeDate(exam.endTime),
+    maxAttempts: exam.maxAttempts,
+    settings,
+    status: exam.status,
+    createdAt: safeDate(exam.createdAt),
+  };
+};
+
+const parseAttempt = (attempt: ApiAttempt): DashboardAttempt => ({
+  id: attempt.id,
+  examId: attempt.examId,
+  examTitle: attempt.examTitle,
+  studentId: attempt.studentId,
+  startTime: safeDate(attempt.startTime),
+  endTime: safeDate(attempt.endTime),
+  score: typeof attempt.score === "number" ? attempt.score : null,
+  status: attempt.status,
+});
+
+const formatDateTime = (date?: Date | null) => {
+  if (!date || Number.isNaN(date.getTime())) {
+    return "Not scheduled";
+  }
+
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+const getTimeUntilStart = (startTime?: Date | null) => {
+  if (!startTime || Number.isNaN(startTime.getTime())) {
+    return "Schedule not set";
+  }
+
+  const now = new Date();
+  const diff = startTime.getTime() - now.getTime();
+
+  if (diff <= 0) {
+    return "Available now";
+  }
+
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24);
+    return `Starts in ${days} day${days !== 1 ? "s" : ""}`;
+  }
+
+  if (hours > 0) {
+    return `Starts in ${hours}h ${minutes}m`;
+  }
+
+  return `Starts in ${minutes}m`;
+};
+
+const canStartExam = (exam: DashboardExam) => {
+  if (!["published", "ongoing"].includes(exam.status)) {
+    return false;
+  }
+
+  const now = new Date();
+
+  if (exam.startTime && now < exam.startTime) {
+    return false;
+  }
+
+  if (exam.endTime && now > exam.endTime) {
+    return false;
+  }
+
+  return true;
+};
+
+const getScoreLabel = (score: number | null) => {
+  if (score === null || Number.isNaN(score)) {
+    return "Pending grading";
+  }
+
+  return `${Math.round(score)}%`;
+};
 
 export default function StudentDashboard() {
   const { user, isAuthenticated, loading } = useAuth();
   const router = useRouter();
-  const [availableExams, setAvailableExams] = useState<Exam[]>([]);
-  const [upcomingExams, setUpcomingExams] = useState<Exam[]>([]);
-  const [completedAttempts, setCompletedAttempts] = useState<ExamAttempt[]>([]);
-  const [stats, setStats] = useState({
-    totalExams: 0,
-    completedExams: 0,
-    averageScore: 0,
-    upcomingExams: 0,
-  });
+  const [availableExams, setAvailableExams] = useState<DashboardExam[]>([]);
+  const [upcomingExams, setUpcomingExams] = useState<DashboardExam[]>([]);
+  const [completedAttempts, setCompletedAttempts] = useState<DashboardAttempt[]>([]);
+  const [stats, setStats] = useState<DashboardStats>(DEFAULT_STATS);
+  const [isFetching, setIsFetching] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!loading && (!isAuthenticated || user?.role !== 'student')) {
@@ -36,132 +227,56 @@ export default function StudentDashboard() {
       return;
     }
 
-    // Mock data for demonstration
-    const mockAvailableExams: Exam[] = [
-      {
-        id: "1",
-        title: "Mathematics Final Exam",
-        description: "Comprehensive mathematics assessment covering algebra, geometry, and calculus",
-        teacherId: "teacher1",
-        duration: 120,
-        startTime: new Date(),
-        endTime: new Date(Date.now() + 2 * 60 * 60 * 1000), // 2 hours from now
-        maxAttempts: 1,
-        questions: [],
-        settings: {
-          shuffleQuestions: true,
-          shuffleOptions: true,
-          showResultsImmediately: false,
-          allowReview: true,
-          preventTabSwitching: true,
-          requireWebcam: true,
-          enableScreenMonitoring: true,
-          lockdownBrowser: true,
-        },
-        status: "published",
-        createdAt: new Date("2025-09-20"),
-      },
-    ];
-
-    const mockUpcomingExams: Exam[] = [
-      {
-        id: "2",
-        title: "Physics Quiz - Chapter 5",
-        description: "Quick assessment on electromagnetic waves and optics",
-        teacherId: "teacher1",
-        duration: 45,
-        startTime: new Date(Date.now() + 24 * 60 * 60 * 1000), // Tomorrow
-        endTime: new Date(Date.now() + 24 * 60 * 60 * 1000 + 45 * 60 * 1000),
-        maxAttempts: 2,
-        questions: [],
-        settings: {
-          shuffleQuestions: false,
-          shuffleOptions: true,
-          showResultsImmediately: true,
-          allowReview: true,
-          preventTabSwitching: true,
-          requireWebcam: false,
-          enableScreenMonitoring: false,
-          lockdownBrowser: false,
-        },
-        status: "published",
-        createdAt: new Date("2025-09-21"),
-      },
-    ];
-
-    const mockCompletedAttempts: ExamAttempt[] = [
-      {
-        id: "attempt1",
-        examId: "exam3",
-        studentId: user?.id || "",
-        startTime: new Date("2025-09-15T10:00:00"),
-        endTime: new Date("2025-09-15T11:30:00"),
-        answers: [],
-        score: 85,
-        status: "submitted",
-        flaggedActivities: [],
-        webcamSnapshots: [],
-      },
-      {
-        id: "attempt2",
-        examId: "exam4",
-        studentId: user?.id || "",
-        startTime: new Date("2025-09-18T14:00:00"),
-        endTime: new Date("2025-09-18T14:45:00"),
-        answers: [],
-        score: 92,
-        status: "submitted",
-        flaggedActivities: [],
-        webcamSnapshots: [],
-      },
-    ];
-
-    setAvailableExams(mockAvailableExams);
-    setUpcomingExams(mockUpcomingExams);
-    setCompletedAttempts(mockCompletedAttempts);
-    
-    setStats({
-      totalExams: mockAvailableExams.length + mockUpcomingExams.length + mockCompletedAttempts.length,
-      completedExams: mockCompletedAttempts.length,
-      averageScore: mockCompletedAttempts.reduce((acc, attempt) => acc + (attempt.score || 0), 0) / mockCompletedAttempts.length,
-      upcomingExams: mockUpcomingExams.length,
-    });
-  }, [user, isAuthenticated, loading, router]);
-
-  const formatDateTime = (date: Date) => {
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  const getTimeUntilStart = (startTime: Date) => {
-    const now = new Date();
-    const diff = startTime.getTime() - now.getTime();
-    
-    if (diff <= 0) return "Available now";
-    
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-    
-    if (hours > 24) {
-      const days = Math.floor(hours / 24);
-      return `Starts in ${days} day${days > 1 ? 's' : ''}`;
+    if (loading || !isAuthenticated || user?.role !== 'student') {
+      return;
     }
-    
-    if (hours > 0) {
-      return `Starts in ${hours}h ${minutes}m`;
-    }
-    
-    return `Starts in ${minutes}m`;
-  };
 
-  const canStartExam = (exam: Exam) => {
-    const now = new Date();
-    return now >= exam.startTime && now <= exam.endTime;
-  };
+    let isActive = true;
+
+    const fetchDashboard = async () => {
+      setIsFetching(true);
+      setFetchError(null);
+
+      try {
+        const data = (await api.student.dashboard()) as StudentDashboardResponse;
+
+        if (!isActive) {
+          return;
+        }
+
+        setAvailableExams(data.availableExams.map(parseExam));
+        setUpcomingExams(data.upcomingExams.map(parseExam));
+        setCompletedAttempts(data.completedAttempts.map(parseAttempt));
+        setStats({
+          totalExams: data.stats?.totalExams ?? DEFAULT_STATS.totalExams,
+          completedExams: data.stats?.completedExams ?? DEFAULT_STATS.completedExams,
+          averageScore: data.stats?.averageScore ?? DEFAULT_STATS.averageScore,
+          upcomingExams: data.stats?.upcomingExams ?? DEFAULT_STATS.upcomingExams,
+        });
+      } catch (error) {
+        if (!isActive) {
+          return;
+        }
+
+        console.error("Failed to load student dashboard data:", error);
+        setFetchError(error instanceof Error ? error.message : "Failed to load dashboard data.");
+        setAvailableExams([]);
+        setUpcomingExams([]);
+        setCompletedAttempts([]);
+        setStats(DEFAULT_STATS);
+      } finally {
+        if (isActive) {
+          setIsFetching(false);
+        }
+      }
+    };
+
+    fetchDashboard();
+
+    return () => {
+      isActive = false;
+    };
+  }, [loading, isAuthenticated, user, router]);
 
   if (loading) {
     return (
@@ -175,6 +290,12 @@ export default function StudentDashboard() {
     return null;
   }
 
+  const showInitialLoading =
+    isFetching &&
+    availableExams.length === 0 &&
+    upcomingExams.length === 0 &&
+    completedAttempts.length === 0;
+
   return (
     <div className="space-y-6">
       {/* Welcome Section */}
@@ -186,6 +307,21 @@ export default function StudentDashboard() {
           View your available exams, track your progress, and check your results.
         </p>
       </div>
+
+      {fetchError && (
+        <Alert variant="destructive">
+          <AlertDescription>{fetchError}</AlertDescription>
+        </Alert>
+      )}
+
+      {showInitialLoading && (
+        <div className="bg-white rounded-lg shadow-sm p-6 flex items-center justify-center">
+          <div className="flex items-center space-x-3 text-gray-600">
+            <div className="h-5 w-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm">Loading your dashboard...</span>
+          </div>
+        </div>
+      )}
 
       {/* Statistics Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -221,7 +357,7 @@ export default function StudentDashboard() {
             <Trophy className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.averageScore.toFixed(0)}%</div>
+            <div className="text-2xl font-bold">{Number(stats.averageScore || 0).toFixed(0)}%</div>
             <p className="text-xs text-muted-foreground">
               Across all exams
             </p>
@@ -306,6 +442,25 @@ export default function StudentDashboard() {
         </Card>
       )}
 
+      {availableExams.length === 0 && !showInitialLoading && !fetchError && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2">
+              <PlayCircle className="h-5 w-5 text-green-600" />
+              <span>Available Exams</span>
+            </CardTitle>
+            <CardDescription>
+              Exams you can take right now
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-600">
+              No exams are currently available. Check back later or contact your instructor if you believe this is unexpected.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Upcoming Exams */}
       {upcomingExams.length > 0 && (
         <Card>
@@ -351,6 +506,25 @@ export default function StudentDashboard() {
         </Card>
       )}
 
+      {upcomingExams.length === 0 && !showInitialLoading && !fetchError && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2">
+              <Calendar className="h-5 w-5 text-blue-600" />
+              <span>Upcoming Exams</span>
+            </CardTitle>
+            <CardDescription>
+              Exams scheduled for later
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-600">
+              No upcoming exams have been scheduled yet.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Recent Results */}
       {completedAttempts.length > 0 && (
         <Card>
@@ -369,25 +543,40 @@ export default function StudentDashboard() {
                 <div key={attempt.id} className="border rounded-lg p-4">
                   <div className="flex items-center justify-between">
                     <div className="flex-1">
-                      <h3 className="font-semibold">Exam Attempt</h3>
+                      <h3 className="font-semibold">{attempt.examTitle || "Exam Attempt"}</h3>
                       <div className="flex items-center space-x-4 mt-2 text-sm text-gray-500">
                         <div className="flex items-center space-x-1">
                           <Calendar className="h-4 w-4" />
-                          <span>Completed: {formatDateTime(attempt.endTime!)}</span>
+                          <span>Completed: {formatDateTime(attempt.endTime ?? attempt.startTime)}</span>
                         </div>
                       </div>
                     </div>
                     
                     <div className="text-right">
-                      <div className="text-2xl font-bold text-green-600">
-                        {attempt.score}%
-                      </div>
+                      <div className="text-2xl font-bold text-green-600">{getScoreLabel(attempt.score)}</div>
                       <div className="text-sm text-gray-500">Score</div>
                     </div>
                   </div>
                 </div>
               ))}
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {completedAttempts.length === 0 && !showInitialLoading && !fetchError && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2">
+              <Trophy className="h-5 w-5 text-yellow-600" />
+              <span>Recent Results</span>
+            </CardTitle>
+            <CardDescription>
+              Your latest exam performances
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-600">You haven&apos;t completed any exams yet. Results will appear here once you do.</p>
           </CardContent>
         </Card>
       )}

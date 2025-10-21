@@ -12,8 +12,6 @@ import {
   Search, 
   Edit,
   Eye,
-  Copy,
-  Archive,
   Trash2,
   Calendar,
   Clock,
@@ -24,7 +22,7 @@ import {
   ArrowUpDown
 } from 'lucide-react';
 import type { StoredExam } from '../../../lib/examStore';
-import { getExams, deleteExam, duplicateExam, archiveExam } from '../../../lib/examStore';
+import { getExams, deleteExam } from '../../../lib/examStore';
 import { motion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 
@@ -131,23 +129,10 @@ const MyExamsPage = () => {
         return <Edit className="h-3 w-3" />;
       case 'completed':
         return <FileText className="h-3 w-3" />;
-      case 'archived':
-        return <Archive className="h-3 w-3" />;
       default:
         return <FileText className="h-3 w-3" />;
     }
   };
-  const handleDuplicate = useCallback((exam: StoredExam) => {
-    duplicateExam(exam.id);
-    // toast/alert placeholder
-    alert(`Exam "${exam.title}" duplicated.`);
-  }, []);
-
-  const handleArchive = useCallback((exam: StoredExam) => {
-    archiveExam(exam.id);
-    alert(`Exam "${exam.title}" archived.`);
-  }, []);
-
   const handleDelete = useCallback((exam: StoredExam) => {
     if (confirm(`Delete exam "${exam.title}"? This cannot be undone.`)) {
       deleteExam(exam.id);
@@ -287,26 +272,39 @@ const MyExamsPage = () => {
                           id={`exam-actions-${exam.id}`}
                           role="menu"
                           aria-label="Exam actions"
-                          className="absolute right-0 top-8 bg-white border rounded-lg shadow-lg p-2 space-y-1 z-10 min-w-[160px] animate-in fade-in-0 zoom-in-95"
+                          className="absolute right-0 top-10 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-10 min-w-[180px] animate-in fade-in-0 zoom-in-95"
                         >
-                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => { setOpenMenuId(null); router.push(`/dashboard/teacher/exam/${exam.id}`); }}>
-                            <Edit className="h-4 w-4 mr-2" />Edit
-                          </Button>
-                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => { setOpenMenuId(null); router.push(`/exam/${exam.id}`); }}>
-                            <Eye className="h-4 w-4 mr-2" />Preview (Student)
-                          </Button>
-                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => { setOpenMenuId(null); router.push(`/dashboard/teacher/exam/${exam.id}/submissions`); }}>
-                            <FileText className="h-4 w-4 mr-2" />Results
-                          </Button>
-                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => { setOpenMenuId(null); handleDuplicate(exam); }}>
-                            <Copy className="h-4 w-4 mr-2" />Duplicate
-                          </Button>
-                          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => { setOpenMenuId(null); handleArchive(exam); }}>
-                            <Archive className="h-4 w-4 mr-2" />Archive
-                          </Button>
-                          <Button variant="outline" size="sm" className="w-full justify-start text-red-600 hover:text-red-700" onClick={() => { setOpenMenuId(null); handleDelete(exam); }}>
-                            <Trash2 className="h-4 w-4 mr-2" />Delete
-                          </Button>
+                          <button 
+                            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
+                            onClick={() => { setOpenMenuId(null); router.push(`/dashboard/teacher/exam/${exam.id}`); }}
+                          >
+                            <Edit className="h-4 w-4 mr-3 text-gray-500" />
+                            Edit
+                          </button>
+                          <button 
+                            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
+                            onClick={() => { setOpenMenuId(null); router.push(`/exam/${exam.id}`); }}
+                          >
+                            <Eye className="h-4 w-4 mr-3 text-gray-500" />
+                            Preview (Student)
+                          </button>
+                          {exam.status !== 'draft' && (
+                            <button 
+                              className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
+                              onClick={() => { setOpenMenuId(null); router.push(`/dashboard/teacher/exam/${exam.id}/submissions`); }}
+                            >
+                              <FileText className="h-4 w-4 mr-3 text-gray-500" />
+                              Results
+                            </button>
+                          )}
+                          <div className="border-t border-gray-200 my-1"></div>
+                          <button 
+                            className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center transition-colors"
+                            onClick={() => { setOpenMenuId(null); handleDelete(exam); }}
+                          >
+                            <Trash2 className="h-4 w-4 mr-3" />
+                            Delete
+                          </button>
                         </div>
                       )}
                     </div>
@@ -322,8 +320,10 @@ const MyExamsPage = () => {
                   </div>
                   <div className="pt-3 border-t">
                     <div className="flex space-x-2">
-                      <Button size="sm" variant="outline" onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}/submissions`)} className="flex-1"><FileText className="h-4 w-4 mr-1" />Results</Button>
-                      <Button size="sm" onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}`)} className="flex-1"><Edit className="h-4 w-4 mr-1" />Edit</Button>
+                      {exam.status !== 'draft' && (
+                        <Button size="sm" variant="outline" onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}/submissions`)} className="flex-1"><FileText className="h-4 w-4 mr-1" />Results</Button>
+                      )}
+                      <Button size="sm" onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}`)} className={exam.status === 'draft' ? 'flex-1 w-full' : 'flex-1'}><Edit className="h-4 w-4 mr-1" />Edit</Button>
                     </div>
                   </div>
                 </CardContent>

@@ -2,23 +2,55 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import { useExamStore } from '../../../../../hooks/useExamStore';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Button } from '../../../../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../../../components/ui/card';
 import { Input } from '../../../../../components/ui/input';
 import { Badge } from '../../../../../components/ui/badge';
 import { ArrowLeft, FileDown, Filter, Search, BarChart3, Users, Clock, Percent } from 'lucide-react';
+import { api } from '../../../../../lib/api/client';
+
+interface ExamSubmission {
+  id: string;
+  studentId: string;
+  score: number;
+  totalQuestions: number;
+  percentage: number;
+  completedAt: string;
+  timeSpent: number;
+}
 
 export default function ExamSubmissionsPage() {
   const params = useParams();
   const router = useRouter();
   const examId = params.id as string;
-  const { currentExam, getResults } = useExamStore(examId);
+  const { currentExam } = useExamStore(examId);
   const [search, setSearch] = useState('');
   const [minPercent, setMinPercent] = useState('');
   const [maxPercent, setMaxPercent] = useState('');
+  const [submissions, setSubmissions] = useState<ExamSubmission[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const results = useMemo(() => currentExam ? getResults(examId) : [], [currentExam, getResults, examId]);
+  // Fetch submissions from API
+  useEffect(() => {
+    const fetchSubmissions = async () => {
+      try {
+        setLoading(true);
+        const data = await api.exams.submissions(examId);
+        setSubmissions(data.submissions || []);
+      } catch (error) {
+        console.error('Failed to fetch submissions:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (examId) {
+      fetchSubmissions();
+    }
+  }, [examId]);
+
+  const results = useMemo(() => submissions, [submissions]);
 
   const filtered = results.filter(r => {
     const matchesSearch = !search || r.studentId.toLowerCase().includes(search.toLowerCase());
@@ -42,6 +74,16 @@ export default function ExamSubmissionsPage() {
     a.href = url; a.download = `exam_${examId}_results.csv`; a.click();
     URL.revokeObjectURL(url);
   };
+
+  if (loading) {
+    return (
+      <div className="p-8 max-w-4xl mx-auto">
+        <div className="flex items-center justify-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        </div>
+      </div>
+    );
+  }
 
   if (!currentExam) {
     return (

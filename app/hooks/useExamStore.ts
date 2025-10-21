@@ -9,10 +9,7 @@ import {
   deleteExam,
   duplicateExam,
   archiveExam,
-  getResultsByExam,
-  upsertResult,
-  type StoredExam,
-  type StoredExamResult
+  type StoredExam
 } from '../lib/examStore';
 
 export function useExamStore(examId?: string) {
@@ -40,9 +37,6 @@ export function useExamStore(examId?: string) {
   const duplicate = useCallback((id: string) => duplicateExam(id), []);
   const archive = useCallback((id: string) => archiveExam(id), []);
 
-  const getResults = useCallback((id: string) => getResultsByExam(id), []);
-  const saveResult = useCallback((r: StoredExamResult) => upsertResult(r), []);
-
   return {
     exams,
     currentExam,
@@ -53,9 +47,7 @@ export function useExamStore(examId?: string) {
     deleteExam: remove,
     duplicateExam: duplicate,
     archiveExam: archive,
-    getResults,
-    saveResult,
   };
 }
 
-export type { StoredExam, StoredExamResult };
+export type { StoredExam };

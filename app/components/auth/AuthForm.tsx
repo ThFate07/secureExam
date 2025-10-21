@@ -9,8 +9,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Alert, AlertDescription } from "../ui/alert";
-import { Eye, EyeOff, User, Mail, Lock, UserCircle, GraduationCap, Shield } from "lucide-react";
-import { encrypt } from "../../lib/crypto";
+import { Eye, EyeOff, User, Mail, Lock, Shield } from "lucide-react";
 
 const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -68,12 +67,8 @@ export function AuthForm({ onLogin, onRegister }: AuthFormProps) {
     setIsLoading(true);
     setError("");
     try {
-      // Encrypt password before sending
-      const encryptedData = {
-        ...data,
-        password: encrypt(data.password),
-      };
-      await onLogin(encryptedData);
+      // Pass data directly to backend - no client-side encryption needed
+      await onLogin(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
@@ -85,34 +80,13 @@ export function AuthForm({ onLogin, onRegister }: AuthFormProps) {
     setIsLoading(true);
     setError("");
     try {
-      // Encrypt password before sending
-      const encryptedData = {
-        ...data,
-        password: encrypt(data.password),
-        confirmPassword: encrypt(data.confirmPassword),
-      };
-      await onRegister(encryptedData);
+      // Pass data directly to backend - no client-side encryption needed
+      await onRegister(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const handleDemoLogin = async (role: "student" | "teacher") => {
-    const demoData = {
-      email: role === "student" ? "student@demo.com" : "teacher@demo.com",
-      password: "demo123",
-      role: role,
-    };
-    
-    // Fill the form with demo data
-    loginForm.setValue("email", demoData.email);
-    loginForm.setValue("password", demoData.password);
-    loginForm.setValue("role", demoData.role);
-    
-    // Submit the form
-    await handleLogin(demoData);
   };
 
   return (
@@ -231,54 +205,6 @@ export function AuthForm({ onLogin, onRegister }: AuthFormProps) {
                 {isLoading ? "Signing In..." : "Sign In"}
               </Button>
 
-              {/* Demo Account Section */}
-              <div className="relative my-6">
-                <div className="absolute inset-0 flex items-center">
-                  <span className="w-full border-t border-gray-300" />
-                </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-white px-3 py-1 text-gray-500">Or try demo accounts</span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full border-gray-300 text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-all duration-300"
-                    onClick={() => handleDemoLogin("student")}
-                    disabled={isLoading}
-                  >
-                    <GraduationCap className="w-4 h-4 mr-2" />
-                    Demo Student
-                  </Button>
-                </motion.div>
-                <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full border-gray-300 text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-all duration-300"
-                    onClick={() => handleDemoLogin("teacher")}
-                    disabled={isLoading}
-                  >
-                    <UserCircle className="w-4 h-4 mr-2" />
-                    Demo Teacher
-                  </Button>
-                </motion.div>
-              </div>
-
-              <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                <p className="text-xs text-gray-700 mb-2 font-semibold">
-                  Demo Accounts:
-                </p>
-                <p className="text-xs text-gray-600">
-                  • Student: Alex Johnson (access to take exams)
-                </p>
-                <p className="text-xs text-gray-600">
-                  • Teacher: Dr. Sarah Wilson (access to create & monitor exams)
-                </p>
-              </div>
             </form>
           ) : (
             <form onSubmit={registerForm.handleSubmit(handleRegister)} className="space-y-4">

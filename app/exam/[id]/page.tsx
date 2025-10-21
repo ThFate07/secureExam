@@ -18,7 +18,7 @@ import {
   Shield,
   Send
 } from "lucide-react";
-import { Exam, Question } from "../../types";
+import { Exam } from "../../types";
 
 export default function ExamInterface() {
   const { id } = useParams();
@@ -29,84 +29,37 @@ export default function ExamInterface() {
   const [violations, setViolations] = useState<string[]>([]);
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
 
-  // Mock exam data - in real app, this would come from API
+  // Fetch exam data from API
   useEffect(() => {
     if (!loading && (!isAuthenticated || user?.role !== 'student')) {
       router.push("/auth");
       return;
     }
 
-    const mockQuestions: Question[] = [
-      {
-        id: "q1",
-        type: "mcq",
-        question: "What is the derivative of x²?",
-        options: ["2x", "x", "2", "x²"],
-        correctAnswer: 0,
-        points: 5,
-        order: 1,
-      },
-      {
-        id: "q2",
-        type: "mcq",
-        question: "Which of the following is a prime number?",
-        options: ["4", "6", "7", "9"],
-        correctAnswer: 2,
-        points: 5,
-        order: 2,
-      },
-      {
-        id: "q3",
-        type: "mcq",
-        question: "What is the value of π (pi) approximately?",
-        options: ["3.14", "2.71", "1.41", "1.73"],
-        correctAnswer: 0,
-        points: 5,
-        order: 3,
-      },
-      {
-        id: "q4",
-        type: "short-answer",
-        question: "Explain the Pythagorean theorem in your own words.",
-        points: 10,
-        order: 4,
-      },
-      {
-        id: "q5",
-        type: "mcq",
-        question: "What is 15% of 200?",
-        options: ["25", "30", "35", "40"],
-        correctAnswer: 1,
-        points: 5,
-        order: 5,
-      },
-    ];
-
-    const mockExam: Exam = {
-      id: id as string,
-      title: "Mathematics Final Exam",
-      description: "Comprehensive mathematics assessment",
-      teacherId: "teacher1",
-      duration: 120, // 2 hours
-      startTime: new Date(),
-      endTime: new Date(Date.now() + 2 * 60 * 60 * 1000),
-      maxAttempts: 1,
-      questions: mockQuestions,
-      settings: {
-        shuffleQuestions: true,
-        shuffleOptions: true,
-        showResultsImmediately: false,
-        allowReview: true,
-        preventTabSwitching: true,
-        requireWebcam: true,
-        enableScreenMonitoring: true,
-        lockdownBrowser: true,
-      },
-      status: "published",
-      createdAt: new Date(),
-    };
-
-    setExam(mockExam);
+    if (isAuthenticated && user?.role === 'student' && id) {
+      fetch(`/api/exams/${id}/start`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) {
+            const fetchedExam: Exam = {
+              ...data.data.exam,
+              startTime: data.data.exam.startTime ? new Date(data.data.exam.startTime) : new Date(),
+              endTime: data.data.exam.endTime ? new Date(data.data.exam.endTime) : new Date(Date.now() + data.data.exam.duration * 60 * 1000),
+              createdAt: new Date(data.data.exam.createdAt),
+            };
+            setExam(fetchedExam);
+          } else {
+            console.error('Failed to fetch exam:', data.error);
+            alert(data.error?.message || 'Failed to load exam');
+            router.push("/dashboard/student");
+          }
+        })
+        .catch(error => {
+          console.error('Failed to fetch exam:', error);
+          alert('Failed to load exam');
+          router.push("/dashboard/student");
+        });
+    }
   }, [id, user, isAuthenticated, loading, router]);
 
   const handleViolation = (violation: string) => {
@@ -131,10 +84,37 @@ export default function ExamInterface() {
     }
   };
 
-  const handleSubmitExam = (answers: Map<string, string | number>) => {
-    console.log("Submitting exam with answers:", answers);
-    // In real app, this would submit to backend
-    router.push("/dashboard/student");
+  const handleSubmitExam = async (answers: Map<string, string | number>) => {
+    if (!exam) return;
+
+    try {
+      // Convert Map to array for API
+      const answersArray = Array.from(answers.entries()).map(([questionId, answer]) => ({
+        questionId,
+        answer,
+      }));
+
+      const response = await fetch(`/api/attempts/${id}/submit`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ answers: answersArray }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        alert(`Exam submitted successfully! Score: ${data.data.percentage.toFixed(2)}%`);
+        router.push("/dashboard/student");
+      } else {
+        console.error('Failed to submit exam:', data.error);
+        alert(data.error?.message || 'Failed to submit exam');
+      }
+    } catch (error) {
+      console.error('Failed to submit exam:', error);
+      alert('Failed to submit exam');
+    }
   };
 
   const handleTimeUp = () => {
