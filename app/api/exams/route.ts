@@ -104,7 +104,7 @@ export async function POST(request: NextRequest) {
     const exam = await prisma.exam.create({
       data: {
         title: data.title,
-        description: data.description,
+        description: data.description || undefined,
         duration: data.duration,
         startTime: data.startTime ? new Date(data.startTime) : null,
         endTime: data.endTime ? new Date(data.endTime) : null,

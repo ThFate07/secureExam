@@ -47,10 +47,23 @@ export async function POST(
       throw new ApiError(400, 'Exam is already published');
     }
 
-    // Update status to published
+    // Calculate start and end times
+    // If exam already has startTime set (scheduled), keep it
+    // Otherwise, set it to now (going live immediately)
+    const now = new Date();
+    const startTime = exam.startTime || now;
+    
+    // Calculate end time: startTime + duration (in minutes)
+    const endTime = exam.endTime || new Date(startTime.getTime() + exam.duration * 60 * 1000);
+
+    // Update status to published with proper times
     const updatedExam = await prisma.exam.update({
       where: { id },
-      data: { status: 'PUBLISHED' },
+      data: { 
+        status: 'PUBLISHED',
+        startTime,
+        endTime,
+      },
       include: {
         examQuestions: {
           include: {

@@ -62,7 +62,7 @@ export async function POST(
   try {
     const user = await requireTeacher(request);
     const { id } = await context.params;
-    const data = await validateRequest(request, enrollStudentSchema);
+    const body = await request.json();
 
     // Check if exam exists and user owns it
     const exam = await prisma.exam.findUnique({
@@ -77,21 +77,57 @@ export async function POST(
       throw new ApiError(403, 'You do not have permission to enroll students');
     }
 
-    // Verify all students exist and are students
-    const students = await prisma.user.findMany({
-      where: {
-        id: { in: data.studentIds },
-        role: 'STUDENT',
-      },
-    });
+    let studentIds: string[] = [];
 
-    if (students.length !== data.studentIds.length) {
-      return successResponse({ error: 'Some students not found or invalid role' }, 400);
+    // Handle class-based enrollment
+    if (body.enrollByClass && (body.branch || body.division || body.year !== undefined)) {
+      const whereClause: {
+        role: 'STUDENT';
+        branch?: string;
+        division?: string;
+        year?: number;
+      } = {
+        role: 'STUDENT',
+      };
+
+      if (body.branch) whereClause.branch = body.branch;
+      if (body.division) whereClause.division = body.division;
+      if (body.year !== undefined && body.year !== null) whereClause.year = body.year;
+
+      const classStudents = await prisma.user.findMany({
+        where: whereClause,
+        select: { id: true },
+      });
+
+      studentIds = classStudents.map(s => s.id);
+
+      if (studentIds.length === 0) {
+        return successResponse({ 
+          error: 'No students found matching the specified class criteria',
+          enrolled: 0 
+        }, 400);
+      }
+    } else {
+      // Handle manual student selection
+      const data = await validateRequest(request, enrollStudentSchema);
+      studentIds = data.studentIds;
+
+      // Verify all students exist and are students
+      const students = await prisma.user.findMany({
+        where: {
+          id: { in: studentIds },
+          role: 'STUDENT',
+        },
+      });
+
+      if (students.length !== studentIds.length) {
+        return successResponse({ error: 'Some students not found or invalid role' }, 400);
+      }
     }
 
     // Enroll students (using createMany with skipDuplicates)
     const result = await prisma.enrollment.createMany({
-      data: data.studentIds.map((studentId) => ({
+      data: studentIds.map((studentId) => ({
         examId: id,
         studentId,
       })),
@@ -104,7 +140,9 @@ export async function POST(
       action: AuditAction.STUDENT_ENROLLED,
       entity: 'Enrollment',
       entityId: id,
-      changes: { studentIds: data.studentIds },
+      changes: body.enrollByClass 
+        ? { branch: body.branch, division: body.division, year: body.year, count: result.count }
+        : { studentIds },
       request,
     });
 

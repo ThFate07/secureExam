@@ -7,7 +7,25 @@ export async function GET(request: NextRequest) {
   try {
     const user = await requireTeacher(request);
 
-    // Get all students enrolled in teacher's exams
+    // Get all students from the database
+    const allStudents = await prisma.user.findMany({
+      where: {
+        role: 'STUDENT',
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        avatar: true,
+        branch: true,
+        division: true,
+        year: true,
+        rollNumber: true,
+        createdAt: true,
+      },
+    });
+
+    // Get all students enrolled in teacher's exams for additional data
     const enrollments = await prisma.enrollment.findMany({
       where: {
         exam: {
@@ -26,8 +44,8 @@ export async function GET(request: NextRequest) {
       distinct: ['studentId'],
     });
 
-    // Get student performance data
-    const studentsData = await Promise.all(
+    // Get student performance data for enrolled students
+    const enrolledStudentsData = await Promise.all(
       enrollments.map(async (enrollment) => {
         const attempts = await prisma.attempt.findMany({
           where: {
@@ -62,16 +80,7 @@ export async function GET(request: NextRequest) {
         }
 
         return {
-          id: enrollment.student.id,
-          studentId: enrollment.student.id,
-          firstName: enrollment.student.name.split(' ')[0] || enrollment.student.name,
-          lastName: enrollment.student.name.split(' ').slice(1).join(' ') || '',
-          name: enrollment.student.name,
-          email: enrollment.student.email,
-          phone: '', // Not stored in current schema
-          enrollmentDate: enrollment.enrolledAt,
-          status: 'active' as const,
-          academicStatus: avgGpa >= 3.5 ? ('honors' as const) : ('regular' as const),
+          studentId: enrollment.studentId,
           class: enrollment.exam.title,
           enrolledClasses: [enrollment.exam.id],
           academicInfo: {
@@ -82,24 +91,45 @@ export async function GET(request: NextRequest) {
             year: 1,
             major: 'Unknown',
           },
-          createdAt: enrollment.student.createdAt,
         };
       })
     );
 
-    // Get unique students (in case a student is enrolled in multiple exams)
-    const uniqueStudents = studentsData.reduce((acc, student) => {
-      const existing = acc.find((s) => s.id === student.id);
-      if (!existing) {
-        acc.push(student);
-      } else {
-        // Merge enrolled classes
-        existing.enrolledClasses = [
-          ...new Set([...existing.enrolledClasses, ...student.enrolledClasses]),
-        ];
-      }
-      return acc;
-    }, [] as typeof studentsData);
+    // Merge all students with enrollment data
+    const studentsData = allStudents.map((student) => {
+      const enrollmentData = enrolledStudentsData.find(e => e.studentId === student.id);
+      
+      return {
+        id: student.id,
+        studentId: student.id,
+        firstName: student.name.split(' ')[0] || student.name,
+        lastName: student.name.split(' ').slice(1).join(' ') || '',
+        name: student.name,
+        email: student.email,
+        avatar: student.avatar,
+        phone: '', // Not stored in current schema
+        enrollmentDate: student.createdAt,
+        status: 'active' as const,
+        academicStatus: enrollmentData?.academicInfo.gpa && enrollmentData.academicInfo.gpa >= 3.5 
+          ? ('honors' as const) 
+          : ('regular' as const),
+        class: enrollmentData?.class || 'Not Enrolled',
+        enrolledClasses: enrollmentData?.enrolledClasses || [],
+        branch: student.branch,
+        division: student.division,
+        year: student.year,
+        rollNumber: student.rollNumber,
+        academicInfo: enrollmentData?.academicInfo || {
+          gpa: 0,
+          totalCredits: 0,
+          completedCredits: 0,
+          semester: 'Current',
+          year: 1,
+          major: 'Unknown',
+        },
+        createdAt: student.createdAt,
+      };
+    });
 
     // Get classes (unique exam titles)
     const classes = await prisma.exam.findMany({
@@ -114,7 +144,7 @@ export async function GET(request: NextRequest) {
     });
 
     return successResponse({
-      students: uniqueStudents,
+      students: studentsData,
       classes: classes.map((c) => c.title),
     });
   } catch (error) {

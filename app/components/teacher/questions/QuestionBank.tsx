@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Button } from '../../ui/button';
 import { Input } from '../../ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '../../ui/card';
@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Label } from '../../ui/label';
 import { Textarea } from '../../ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../ui/select';
-import { Plus, Search, Filter, Edit3, Trash2, BookOpen, Tag, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Search, Filter, Edit3, Trash2, BookOpen, Tag, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { Question } from '../../../types/question';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -17,52 +17,28 @@ interface QuestionBankProps {
   teacherId: string;
 }
 
-const DEMO_QUESTIONS: Question[] = [
-  {
-    id: '1',
-    title: 'Basic JavaScript Variables',
-    type: 'multiple-choice',
-    question: 'Which of the following is the correct way to declare a variable in JavaScript?',
-    options: ['var myVar;', 'variable myVar;', 'declare myVar;', 'let myVar = undefined;'],
-    correctAnswer: 'var myVar;',
-    points: 2,
-    subject: 'JavaScript',
-    tags: ['variables', 'syntax', 'basics'],
-    explanation: 'The var keyword is used to declare variables in JavaScript.',
-    createdAt: new Date('2024-01-15'),
-    updatedAt: new Date('2024-01-15'),
-    createdBy: 'demo-teacher'
-  },
-  {
-    id: '2',
-    title: 'React Hooks Understanding',
-    type: 'true-false',
-    question: 'useState can only be used in class components.',
-    options: ['True', 'False'],
-    correctAnswer: 'False',
-    points: 1,
-    subject: 'React',
-    tags: ['hooks', 'useState', 'components'],
-    explanation: 'useState is a hook that can only be used in functional components, not class components.',
-    createdAt: new Date('2024-01-16'),
-    updatedAt: new Date('2024-01-16'),
-    createdBy: 'demo-teacher'
-  },
-  {
-    id: '3',
-    title: 'Algorithm Complexity',
-    type: 'short-answer',
-    question: 'Explain the time complexity of a binary search algorithm and justify your answer.',
-    correctAnswer: 'O(log n) - because we eliminate half of the search space in each iteration',
-    points: 5,
-    subject: 'Algorithms',
-    tags: ['complexity', 'binary-search', 'big-o'],
-    explanation: 'Binary search has O(log n) time complexity because it divides the search space in half with each comparison.',
-    createdAt: new Date('2024-01-17'),
-    updatedAt: new Date('2024-01-17'),
-    createdBy: 'demo-teacher'
-  }
-];
+// Map database QuestionType to frontend type
+const mapDbTypeToFrontend = (dbType: string): Question['type'] => {
+  const mapping: Record<string, Question['type']> = {
+    'MCQ': 'multiple-choice',
+    'TRUE_FALSE': 'true-false',
+    'SHORT_ANSWER': 'short-answer',
+    'ESSAY': 'essay',
+    'MULTIPLE_SELECT': 'multiple-choice'
+  };
+  return mapping[dbType] || 'multiple-choice';
+};
+
+// Map frontend type to database QuestionType
+const mapFrontendTypeToDb = (frontendType: Question['type']): string => {
+  const mapping: Record<Question['type'], string> = {
+    'multiple-choice': 'MCQ',
+    'true-false': 'TRUE_FALSE',
+    'short-answer': 'SHORT_ANSWER',
+    'essay': 'ESSAY'
+  };
+  return mapping[frontendType] || 'MCQ';
+};
 
 type QuestionFilters = {
   type?: Question['type'];
@@ -70,15 +46,53 @@ type QuestionFilters = {
 };
 
 const QuestionBank: React.FC<QuestionBankProps> = ({ teacherId }) => {
-  const [questions, setQuestions] = useState<Question[]>(() =>
-    DEMO_QUESTIONS.map((question) => ({ ...question, createdBy: teacherId || question.createdBy }))
-  );
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filters, setFilters] = useState<QuestionFilters>({});
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [expandedQuestions, setExpandedQuestions] = useState<Set<string>>(new Set());
+
+  // Fetch questions from the database
+  useEffect(() => {
+    const fetchQuestions = async () => {
+      try {
+        setIsLoading(true);
+        const response = await fetch('/api/questions');
+        if (!response.ok) {
+          throw new Error('Failed to fetch questions');
+        }
+        const data = await response.json();
+        
+        // Map database questions to frontend format
+        const mappedQuestions: Question[] = data.data.questions.map((q: Record<string, unknown>) => ({
+          id: q.id as string,
+          title: q.title as string,
+          type: mapDbTypeToFrontend(q.type as string),
+          question: q.question as string,
+          options: q.options as string[] | undefined,
+          correctAnswer: q.correctAnswer as string || '',
+          points: q.points as number,
+          subject: q.subject as string || '',
+          tags: (q.tags as string[]) || [],
+          explanation: ((q.metadata as Record<string, unknown>)?.explanation as string) || undefined,
+          createdAt: new Date(q.createdAt as string),
+          updatedAt: new Date(q.updatedAt as string),
+          createdBy: teacherId
+        }));
+        
+        setQuestions(mappedQuestions);
+      } catch (error) {
+        console.error('Error fetching questions:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchQuestions();
+  }, [teacherId]);
 
   const filteredQuestions = useMemo(() => {
     return questions.filter((question) => {
@@ -148,14 +162,73 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ teacherId }) => {
                 </DialogHeader>
             <QuestionForm 
               question={editingQuestion}
-              onSave={(question) => {
-                if (editingQuestion) {
-                  setQuestions(prev => prev.map(q => q.id === editingQuestion.id ? question : q));
-                } else {
-                  setQuestions(prev => [...prev, { ...question, id: Date.now().toString() }]);
+              onSave={async (question) => {
+                try {
+                  // Prepare the data for the API
+                  const apiData = {
+                    title: question.question,
+                    type: mapFrontendTypeToDb(question.type),
+                    question: question.question,
+                    options: question.options || undefined,
+                    correctAnswer: question.correctAnswer as string,
+                    points: question.points,
+                    tags: question.tags,
+                    subject: question.subject,
+                    difficulty: 'medium',
+                    metadata: question.explanation ? { explanation: question.explanation } : undefined
+                  };
+
+                  if (editingQuestion) {
+                    // Update existing question
+                    const response = await fetch(`/api/questions/${editingQuestion.id}`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(apiData)
+                    });
+
+                    if (!response.ok) {
+                      throw new Error('Failed to update question');
+                    }
+
+                    const result = await response.json();
+                    const updatedQuestion: Question = {
+                      ...question,
+                      id: result.data.id,
+                      createdAt: new Date(result.data.createdAt),
+                      updatedAt: new Date(result.data.updatedAt)
+                    };
+                    
+                    setQuestions(prev => prev.map(q => q.id === editingQuestion.id ? updatedQuestion : q));
+                  } else {
+                    // Create new question
+                    const response = await fetch('/api/questions', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(apiData)
+                    });
+
+                    if (!response.ok) {
+                      throw new Error('Failed to create question');
+                    }
+
+                    const result = await response.json();
+                    const newQuestion: Question = {
+                      ...question,
+                      id: result.data.id,
+                      createdAt: new Date(result.data.createdAt),
+                      updatedAt: new Date(result.data.updatedAt),
+                      createdBy: teacherId
+                    };
+                    
+                    setQuestions(prev => [...prev, newQuestion]);
+                  }
+                  
+                  setIsCreateModalOpen(false);
+                  setEditingQuestion(null);
+                } catch (error) {
+                  console.error('Error saving question:', error);
+                  alert('Failed to save question. Please try again.');
                 }
-                setIsCreateModalOpen(false);
-                setEditingQuestion(null);
               }}
               onCancel={() => {
                 setIsCreateModalOpen(false);
@@ -253,6 +326,15 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ teacherId }) => {
           </p>
         </div>
 
+        {isLoading ? (
+          <Card>
+            <CardContent className="p-12 text-center">
+              <Loader2 className="h-12 w-12 text-gray-400 mx-auto mb-4 animate-spin" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">Loading questions...</h3>
+              <p className="text-gray-600">Please wait while we fetch your questions.</p>
+            </CardContent>
+          </Card>
+        ) : (
         <AnimatePresence>
           {filteredQuestions.map((question) => (
             <motion.div
@@ -308,8 +390,26 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ teacherId }) => {
                         variant="ghost"
                         size="sm"
                         className="text-red-600 hover:text-red-700"
-                        onClick={() => {
-                          setQuestions(prev => prev.filter(q => q.id !== question.id));
+                        onClick={async () => {
+                          if (!confirm('Are you sure you want to delete this question?')) {
+                            return;
+                          }
+                          
+                          try {
+                            const response = await fetch(`/api/questions/${question.id}`, {
+                              method: 'DELETE'
+                            });
+
+                            if (!response.ok) {
+                              const error = await response.json();
+                              throw new Error(error.error || 'Failed to delete question');
+                            }
+
+                            setQuestions(prev => prev.filter(q => q.id !== question.id));
+                          } catch (error) {
+                            console.error('Error deleting question:', error);
+                            alert(error instanceof Error ? error.message : 'Failed to delete question. Please try again.');
+                          }
                         }}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -379,8 +479,9 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ teacherId }) => {
             </motion.div>
           ))}
         </AnimatePresence>
+        )}
 
-        {filteredQuestions.length === 0 && (
+        {!isLoading && filteredQuestions.length === 0 && (
           <Card>
             <CardContent className="p-12 text-center">
               <BookOpen className="h-12 w-12 text-gray-400 mx-auto mb-4" />
@@ -406,7 +507,7 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ teacherId }) => {
 // Question Form Component
 const QuestionForm: React.FC<{
   question?: Question | null;
-  onSave: (question: Question) => void;
+  onSave: (question: Question) => Promise<void>;
   onCancel: () => void;
 }> = ({ question, onSave, onCancel }) => {
   // Convert existing correct answer to index if it's a multiple choice question
@@ -423,7 +524,7 @@ const QuestionForm: React.FC<{
     title: question?.question || '', // Use question as title since they're the same
     type: question?.type || 'multiple-choice' as Question['type'],
     question: question?.question || '',
-    options: question?.options || ['', '', '', ''],
+    options: question?.options || (question?.type === 'true-false' ? ['True', 'False'] : ['', '', '', '']),
     correctAnswer: getInitialCorrectAnswer(),
     points: question?.points || 1,
     subject: question?.subject || '',
@@ -466,9 +567,15 @@ const QuestionForm: React.FC<{
 
         <div>
           <Label htmlFor="type" className="text-sm font-semibold text-gray-900 mb-2 block">Question Type</Label>
-          <Select value={formData.type} onValueChange={(value) => 
-            setFormData(prev => ({ ...prev, type: value as Question['type'] }))
-          }>
+          <Select value={formData.type} onValueChange={(value) => {
+            const newType = value as Question['type'];
+            setFormData(prev => ({ 
+              ...prev, 
+              type: newType,
+              options: newType === 'true-false' ? ['True', 'False'] : prev.options,
+              correctAnswer: newType === 'true-false' ? '' : prev.correctAnswer
+            }));
+          }}>
             <SelectTrigger className="h-12 border-2 border-gray-200 bg-white text-gray-900 focus:border-gray-600 focus:shadow-sm text-base transition-all duration-200">
               <SelectValue />
             </SelectTrigger>

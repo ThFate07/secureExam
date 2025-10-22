@@ -234,54 +234,54 @@ export default function TeacherDashboard() {
               </div>
             ) : (
               exams.filter(isExamActive).map((exam) => (
-                <div key={exam.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-3">
-                        <h3 className="font-semibold text-lg">{exam.title}</h3>
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(exam.status)}`}>
-                          {exam.status}
-                        </span>
-                      </div>
-                      <p className="text-gray-600 text-sm mt-1">{exam.description}</p>
-                      <div className="flex items-center space-x-4 mt-2 text-sm text-gray-500">
-                        <div className="flex items-center space-x-1">
-                          <Clock className="h-4 w-4" />
-                          <span>{exam.duration} minutes</span>
+                  <div key={exam.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-3">
+                          <h3 className="font-semibold text-lg">{exam.title}</h3>
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(exam.status)}`}>
+                            {exam.status}
+                          </span>
                         </div>
-                        <div>Start: {formatDate(exam.startTime)}</div>
-                        <div>End: {formatDate(exam.endTime)}</div>
+                        <p className="text-gray-600 text-sm mt-1">{exam.description}</p>
+                        <div className="flex items-center space-x-4 mt-2 text-sm text-gray-500">
+                          <div className="flex items-center space-x-1">
+                            <Clock className="h-4 w-4" />
+                            <span>{exam.duration} minutes</span>
+                          </div>
+                          <div>Start: {formatDate(exam.startTime)}</div>
+                          <div>End: {formatDate(exam.endTime)}</div>
+                        </div>
                       </div>
-                    </div>
-                    
-                    <div className="flex items-center space-x-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}`)}
-                      >
-                        <Settings className="h-4 w-4 mr-1" />
-                        Edit
-                      </Button>
                       
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}/monitor`)}
-                      >
-                        <Eye className="h-4 w-4 mr-1" />
-                        Monitor
-                      </Button>
-                      
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}/submissions`)}
-                      >
-                        <FileText className="h-4 w-4 mr-1" />
-                        Results
-                      </Button>
-                    </div>
+                      <div className="flex items-center space-x-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}`)}
+                        >
+                          <Settings className="h-4 w-4 mr-1" />
+                          Edit
+                        </Button>
+                        
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}/monitor`)}
+                        >
+                          <Eye className="h-4 w-4 mr-1" />
+                          Monitor
+                        </Button>
+                        
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}/submissions`)}
+                        >
+                          <FileText className="h-4 w-4 mr-1" />
+                          Results
+                        </Button>
+                      </div>
                   </div>
                 </div>
               ))

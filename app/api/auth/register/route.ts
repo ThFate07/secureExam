@@ -28,19 +28,43 @@ export async function POST(request: NextRequest) {
     // Hash password
     const passwordHash = await bcrypt.hash(data.password, 10);
 
+    // Create user with class information for students
+    const userData: {
+      name: string;
+      email: string;
+      passwordHash: string;
+      role: 'STUDENT' | 'TEACHER' | 'ADMIN';
+      branch?: string;
+      division?: string;
+      year?: number;
+      rollNumber?: string;
+    } = {
+      name: data.name,
+      email: data.email,
+      passwordHash,
+      role: data.role.toUpperCase() as 'STUDENT' | 'TEACHER' | 'ADMIN',
+    };
+
+    // Add student-specific fields if role is student
+    if (data.role === 'STUDENT') {
+      if (data.branch) userData.branch = data.branch;
+      if (data.division) userData.division = data.division;
+      if (data.year) userData.year = parseInt(data.year);
+      if (data.rollNumber) userData.rollNumber = data.rollNumber;
+    }
+
     // Create user
     const user = await prisma.user.create({
-      data: {
-        name: data.name,
-        email: data.email,
-        passwordHash,
-        role: data.role,
-      },
+      data: userData,
       select: {
         id: true,
         email: true,
         name: true,
         role: true,
+        branch: true,
+        division: true,
+        year: true,
+        rollNumber: true,
         createdAt: true,
       },
     });

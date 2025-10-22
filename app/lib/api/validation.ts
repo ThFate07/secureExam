@@ -6,6 +6,11 @@ export const registerSchema = z.object({
   email: z.string().email('Invalid email address'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
   role: z.enum(['STUDENT', 'TEACHER']).default('STUDENT'),
+  // Student-specific fields (optional)
+  branch: z.string().optional(),
+  division: z.string().optional(),
+  year: z.string().optional(),
+  rollNumber: z.string().optional(),
 });
 
 export const loginSchema = z.object({
@@ -32,7 +37,7 @@ export const updateQuestionSchema = createQuestionSchema.partial();
 // Exam schemas
 export const createExamSchema = z.object({
   title: z.string().min(1, 'Title is required'),
-  description: z.string().optional().default(''),
+  description: z.string().default(''),
   duration: z.number().min(1, 'Duration must be at least 1 minute'),
   startTime: z.string().datetime().optional(),
   endTime: z.string().datetime().optional(),
@@ -58,7 +63,7 @@ export const createExamSchema = z.object({
 
 export const updateExamSchema = z.object({
   title: z.string().min(1).optional(),
-  description: z.string().min(1).optional(),
+  description: z.string().optional(),
   duration: z.number().min(1).optional(),
   startTime: z.string().datetime().optional(),
   endTime: z.string().datetime().optional(),

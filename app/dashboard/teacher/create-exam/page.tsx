@@ -159,7 +159,6 @@ const CreateExamPage: React.FC = () => {
       // Prepare exam data for API
       const examData: Record<string, unknown> = {
         title: form.title.trim(),
-        description: form.description.trim(),
         duration: form.duration,
         maxAttempts: 1,
         questionIds: selectedQuestionIds,
@@ -180,16 +179,21 @@ const CreateExamPage: React.FC = () => {
         },
       };
 
+      // Add description only if it's not empty
+      if (form.description.trim()) {
+        examData.description = form.description.trim();
+      }
+
       // Only add optional fields if they have values
       if (scheduledForIso) {
         examData.startTime = scheduledForIso;
       }
 
       // Create exam in database via API
-      const createdExam = await api.exams.create(examData);
+      await api.exams.create(examData);
       
-      // Navigate to the exam page
-      router.push(`/dashboard/teacher/exam/${createdExam.id}`);
+      // Navigate to my exams page
+      router.push('/dashboard/teacher/my-exams');
     } catch (err) {
       console.error('Failed to create exam:', err);
       setError(err instanceof Error ? err.message : 'Failed to create exam. Please try again.');

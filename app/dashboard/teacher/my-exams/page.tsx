@@ -21,10 +21,35 @@ import {
   Filter,
   ArrowUpDown
 } from 'lucide-react';
-import type { StoredExam } from '../../../lib/examStore';
-import { getExams, deleteExam } from '../../../lib/examStore';
 import { motion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
+import { api } from '../../../lib/api/client';
+
+interface ExamQuestion {
+  id: string;
+  questionId: string;
+  order: number;
+  question: {
+    id: string;
+    title: string;
+    points: number;
+  };
+}
+
+interface DBExam {
+  id: string;
+  title: string;
+  description: string;
+  duration: number;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  examQuestions: ExamQuestion[];
+  _count: {
+    enrollments: number;
+    attempts: number;
+  };
+}
 
 const MyExamsPage = () => {
   const router = useRouter();
@@ -34,17 +59,29 @@ const MyExamsPage = () => {
   const [sortBy, setSortBy] = useState('createdAt');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
-  const [exams, setExams] = useState<StoredExam[]>([]);
-  // Load and subscribe to store changes
+  const [exams, setExams] = useState<DBExam[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Fetch exams from API
   useEffect(() => {
-    const load = () => setExams(getExams());
-    load();
-    const handler = () => load();
-    window.addEventListener('examStoreChanged', handler as EventListener);
-    return () => window.removeEventListener('examStoreChanged', handler as EventListener);
+    const fetchExams = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const response = await api.exams.list();
+        setExams(response.exams || []);
+      } catch (err) {
+        console.error('Failed to fetch exams:', err);
+        setError(err instanceof Error ? err.message : 'Failed to load exams');
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchExams();
   }, []);
 
-  const [filteredExams, setFilteredExams] = useState<StoredExam[]>([]);
+  const [filteredExams, setFilteredExams] = useState<DBExam[]>([]);
   // track which exam action menu is open (by exam id)
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const menusContainerRef = useRef<HTMLDivElement | null>(null);
@@ -67,7 +104,7 @@ const MyExamsPage = () => {
     const filtered = exams.filter(exam => {
       const matchesSearch = exam.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
                            exam.description.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesStatus = statusFilter === 'All Status' || exam.status === statusFilter;
+      const matchesStatus = statusFilter === 'All Status' || exam.status === statusFilter.toUpperCase();
       return matchesSearch && matchesStatus;
     });
 
@@ -107,14 +144,16 @@ const MyExamsPage = () => {
   }, [searchTerm, statusFilter, sortBy, sortOrder, exams]);
 
   const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'active':
+    const statusUpper = status.toUpperCase();
+    switch (statusUpper) {
+      case 'PUBLISHED':
+      case 'ONGOING':
         return 'bg-green-100 text-green-800 border-green-200';
-      case 'draft':
+      case 'DRAFT':
         return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'completed':
+      case 'COMPLETED':
         return 'bg-gray-100 text-gray-800 border-gray-200';
-      case 'archived':
+      case 'ARCHIVED':
         return 'bg-blue-100 text-blue-800 border-blue-200';
       default:
         return 'bg-gray-100 text-gray-800 border-gray-200';
@@ -122,21 +161,31 @@ const MyExamsPage = () => {
   };
 
   const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'active':
+    const statusUpper = status.toUpperCase();
+    switch (statusUpper) {
+      case 'PUBLISHED':
+      case 'ONGOING':
         return <Clock className="h-3 w-3" />;
-      case 'draft':
+      case 'DRAFT':
         return <Edit className="h-3 w-3" />;
-      case 'completed':
+      case 'COMPLETED':
         return <FileText className="h-3 w-3" />;
       default:
         return <FileText className="h-3 w-3" />;
     }
   };
-  const handleDelete = useCallback((exam: StoredExam) => {
+  
+  const handleDelete = useCallback(async (exam: DBExam) => {
     if (confirm(`Delete exam "${exam.title}"? This cannot be undone.`)) {
-      deleteExam(exam.id);
-      alert(`Exam "${exam.title}" deleted.`);
+      try {
+        await api.exams.delete(exam.id);
+        // Refresh the exams list
+        setExams(prev => prev.filter(e => e.id !== exam.id));
+        alert(`Exam "${exam.title}" deleted.`);
+      } catch (err) {
+        console.error('Failed to delete exam:', err);
+        alert('Failed to delete exam. Please try again.');
+      }
     }
   }, []);
 
@@ -189,7 +238,8 @@ const MyExamsPage = () => {
                   <SelectContent>
                     <SelectItem value="All Status">All Status</SelectItem>
                     <SelectItem value="draft">Draft</SelectItem>
-                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="published">Published</SelectItem>
+                    <SelectItem value="ongoing">Ongoing</SelectItem>
                     <SelectItem value="completed">Completed</SelectItem>
                     <SelectItem value="archived">Archived</SelectItem>
                   </SelectContent>
@@ -226,15 +276,19 @@ const MyExamsPage = () => {
       {filteredExams.length === 0 ? (
         <div className="text-center py-16 border rounded-lg bg-white">
           <FileText className="h-14 w-14 mx-auto text-gray-300 mb-4" />
-          <p className="text-gray-700 mb-6">{searchTerm || statusFilter !== 'All Status' ? 'No exams match your filters.' : "You haven't created any exams yet."}</p>
-          <Button onClick={() => router.push('/dashboard/teacher/create-exam')}>
-            <Plus className="h-4 w-4 mr-2" />Create Your First Exam
-          </Button>
+          <p className="text-gray-700 mb-6">
+            {loading ? 'Loading exams...' : error ? `Error: ${error}` : (searchTerm || statusFilter !== 'All Status' ? 'No exams match your filters.' : "You haven't created any exams yet.")}
+          </p>
+          {!loading && !error && (
+            <Button onClick={() => router.push('/dashboard/teacher/create-exam')}>
+              <Plus className="h-4 w-4 mr-2" />Create Your First Exam
+            </Button>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredExams.map((exam) => {
-            const totalPoints = exam.questions.reduce((s, q) => s + (q.points ?? 0), 0);
+            const totalPoints = exam.examQuestions.reduce((s: number, eq) => s + (eq.question.points ?? 0), 0);
             return (
               <motion.div key={exam.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white border rounded-lg shadow-sm hover:shadow-md transition-shadow">
                 <CardHeader className="pb-3">
@@ -245,7 +299,7 @@ const MyExamsPage = () => {
                         <Badge className={getStatusColor(exam.status)}>
                           <div className="flex items-center space-x-1">
                             {getStatusIcon(exam.status)}
-                            <span className="capitalize">{exam.status}</span>
+                            <span className="capitalize">{exam.status.toLowerCase()}</span>
                           </div>
                         </Badge>
                         <Badge variant="outline" className="text-blue-600">{totalPoints} pts</Badge>
@@ -288,7 +342,7 @@ const MyExamsPage = () => {
                             <Eye className="h-4 w-4 mr-3 text-gray-500" />
                             Preview (Student)
                           </button>
-                          {exam.status !== 'draft' && (
+                          {exam.status !== 'DRAFT' && (
                             <button 
                               className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
                               onClick={() => { setOpenMenuId(null); router.push(`/dashboard/teacher/exam/${exam.id}/submissions`); }}
@@ -314,16 +368,16 @@ const MyExamsPage = () => {
                   <p className="text-sm text-gray-700 line-clamp-2 min-h-[40px]">{exam.description || 'No description provided.'}</p>
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div className="flex items-center space-x-2 text-gray-700"><Clock className="h-4 w-4" /><span>{exam.duration} min</span></div>
-                    <div className="flex items-center space-x-2 text-gray-700"><Users className="h-4 w-4" /><span>{exam.questions.length} questions</span></div>
+                    <div className="flex items-center space-x-2 text-gray-700"><Users className="h-4 w-4" /><span>{exam.examQuestions.length} questions</span></div>
                     <div className="flex items-center space-x-2 text-gray-700"><Calendar className="h-4 w-4" /><span>{formatDate(exam.createdAt)}</span></div>
                     <div className="text-sm text-gray-700">Updated {formatDate(exam.updatedAt)}</div>
                   </div>
                   <div className="pt-3 border-t">
                     <div className="flex space-x-2">
-                      {exam.status !== 'draft' && (
+                      {exam.status !== 'DRAFT' && (
                         <Button size="sm" variant="outline" onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}/submissions`)} className="flex-1"><FileText className="h-4 w-4 mr-1" />Results</Button>
                       )}
-                      <Button size="sm" onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}`)} className={exam.status === 'draft' ? 'flex-1 w-full' : 'flex-1'}><Edit className="h-4 w-4 mr-1" />Edit</Button>
+                      <Button size="sm" onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}`)} className={exam.status === 'DRAFT' ? 'flex-1 w-full' : 'flex-1'}><Edit className="h-4 w-4 mr-1" />Edit</Button>
                     </div>
                   </div>
                 </CardContent>

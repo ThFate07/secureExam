@@ -8,8 +8,9 @@ import { Input } from '../../../../components/ui/input';
 import { Label } from '../../../../components/ui/label';
 import { Badge } from '../../../../components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../../../components/ui/dialog';
-import { ArrowLeft, Save, Plus, Trash2, Upload, UserPlus, Users, Search, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Save, Plus, Trash2, Upload, UserPlus, Users, Search, CheckCircle, GraduationCap } from 'lucide-react';
 import { api } from '../../../../lib/api/client';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../../components/ui/select';
 
 interface Question {
   id: string;
@@ -47,6 +48,9 @@ interface Student {
   name: string;
   email: string;
   avatar?: string;
+  branch?: string;
+  division?: string;
+  year?: number;
 }
 
 interface Enrollment {
@@ -69,12 +73,21 @@ export default function ExamDetailPage() {
   
   // Enrollment state
   const [showEnrollDialog, setShowEnrollDialog] = useState(false);
+  const [enrollmentMode, setEnrollmentMode] = useState<'individual' | 'class'>('class');
   const [allStudents, setAllStudents] = useState<Student[]>([]);
   const [enrolledStudents, setEnrolledStudents] = useState<Enrollment[]>([]);
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [enrolling, setEnrolling] = useState(false);
   const [loadingStudents, setLoadingStudents] = useState(false);
+  
+  // Class-based enrollment state
+  const [selectedBranch, setSelectedBranch] = useState<string>('');
+  const [selectedDivision, setSelectedDivision] = useState<string>('');
+  const [selectedYear, setSelectedYear] = useState<string>('');
+  const [branches, setBranches] = useState<string[]>([]);
+  const [divisions, setDivisions] = useState<string[]>([]);
+  const [years, setYears] = useState<number[]>([]);
 
   // Fetch exam data from API
   useEffect(() => {
@@ -130,7 +143,10 @@ export default function ExamDetailPage() {
           id: s.id,
           name: `${s.firstName} ${s.lastName}`,
           email: s.email,
-          avatar: s.avatar
+          avatar: s.avatar,
+          branch: s.branch,
+          division: s.division,
+          year: s.year
         }));
         setAllStudents(students);
       }
@@ -141,6 +157,16 @@ export default function ExamDetailPage() {
       
       if (enrollmentsData.success) {
         setEnrolledStudents(enrollmentsData.data.enrollments || []);
+      }
+
+      // Fetch available classes
+      const classesResponse = await fetch('/api/teacher/classes');
+      const classesData = await classesResponse.json();
+      
+      if (classesData.success) {
+        setBranches(classesData.data.branches || []);
+        setDivisions(classesData.data.divisions || []);
+        setYears(classesData.data.years || []);
       }
     } catch (error) {
       console.error('Error fetching students:', error);
@@ -167,14 +193,48 @@ export default function ExamDetailPage() {
 
   // Handle enrollment
   const handleEnrollStudents = async () => {
-    if (selectedStudentIds.length === 0) {
+    if (enrollmentMode === 'individual' && selectedStudentIds.length === 0) {
       alert('Please select at least one student');
+      return;
+    }
+
+    if (enrollmentMode === 'class' && !selectedBranch && !selectedDivision && !selectedYear) {
+      alert('Please select at least one class criteria (branch, division, or year)');
       return;
     }
 
     setEnrolling(true);
     try {
-      await api.exams.enroll(examId, selectedStudentIds);
+      let response;
+      
+      if (enrollmentMode === 'class') {
+        // Class-based enrollment
+        response = await fetch(`/api/exams/${examId}/enroll`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            enrollByClass: true,
+            branch: selectedBranch || undefined,
+            division: selectedDivision || undefined,
+            year: selectedYear ? parseInt(selectedYear) : undefined,
+          }),
+        });
+      } else {
+        // Individual enrollment
+        response = await fetch(`/api/exams/${examId}/enroll`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ studentIds: selectedStudentIds }),
+        });
+      }
+
+      const data = await response.json();
+      
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to enroll students');
+      }
       
       // Refresh exam data to update enrollment count
       const updatedExam = await api.exams.get(examId);
@@ -185,9 +245,12 @@ export default function ExamDetailPage() {
       
       // Clear selection and close dialog
       setSelectedStudentIds([]);
+      setSelectedBranch('');
+      setSelectedDivision('');
+      setSelectedYear('');
       setShowEnrollDialog(false);
       
-      alert(`Successfully enrolled ${selectedStudentIds.length} student(s)!`);
+      alert(`Successfully enrolled ${data.data.enrolled} student(s)!`);
     } catch (error) {
       console.error('Error enrolling students:', error);
       alert(`Failed to enroll students: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -501,16 +564,206 @@ export default function ExamDetailPage() {
           </DialogHeader>
 
           <div className="space-y-4 mt-4">
-            {/* Search */}
-            <div className="relative">
-              <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-              <Input
-                placeholder="Search students by name or email..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-              />
+            {/* Enrollment Mode Tabs */}
+            <div className="flex gap-2 p-1 bg-gray-100 rounded-lg">
+              <button
+                onClick={() => setEnrollmentMode('class')}
+                className={`flex-1 px-4 py-2 rounded-md font-medium transition-colors ${
+                  enrollmentMode === 'class'
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <GraduationCap className="inline h-4 w-4 mr-2" />
+                By Class/Division
+              </button>
+              <button
+                onClick={() => setEnrollmentMode('individual')}
+                className={`flex-1 px-4 py-2 rounded-md font-medium transition-colors ${
+                  enrollmentMode === 'individual'
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <Users className="inline h-4 w-4 mr-2" />
+                Individual Students
+              </button>
             </div>
+
+            {/* Class-based Enrollment */}
+            {enrollmentMode === 'class' && (
+              <div className="space-y-4">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <h3 className="font-semibold text-blue-900 mb-3">Select Class Criteria</h3>
+                  <p className="text-sm text-blue-700 mb-4">
+                    Choose branch, division, and/or year to enroll all matching students
+                  </p>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <Label htmlFor="branch" className="text-sm font-medium mb-1.5 block">
+                        Branch
+                      </Label>
+                      <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+                        <SelectTrigger id="branch" className="w-full">
+                          <SelectValue placeholder="Select branch" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">All Branches</SelectItem>
+                          {branches.map((branch) => (
+                            <SelectItem key={branch} value={branch}>
+                              {branch}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div>
+                      <Label htmlFor="division" className="text-sm font-medium mb-1.5 block">
+                        Division
+                      </Label>
+                      <Select value={selectedDivision} onValueChange={setSelectedDivision}>
+                        <SelectTrigger id="division" className="w-full">
+                          <SelectValue placeholder="Select division" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">All Divisions</SelectItem>
+                          {divisions.map((division) => (
+                            <SelectItem key={division} value={division}>
+                              Division {division}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div>
+                      <Label htmlFor="year" className="text-sm font-medium mb-1.5 block">
+                        Year
+                      </Label>
+                      <Select value={selectedYear} onValueChange={setSelectedYear}>
+                        <SelectTrigger id="year" className="w-full">
+                          <SelectValue placeholder="Select year" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">All Years</SelectItem>
+                          {years.map((year) => (
+                            <SelectItem key={year} value={year.toString()}>
+                              Year {year}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {(selectedBranch || selectedDivision || selectedYear) && (
+                    <div className="mt-4 p-3 bg-white rounded border border-blue-300">
+                      <p className="text-sm font-medium text-blue-900">
+                        Selected: {' '}
+                        {[
+                          selectedBranch && `Branch: ${selectedBranch}`,
+                          selectedDivision && `Division: ${selectedDivision}`,
+                          selectedYear && `Year: ${selectedYear}`,
+                        ].filter(Boolean).join(', ')}
+                      </p>
+                      <p className="text-xs text-blue-600 mt-1">
+                        {allStudents.filter(student => 
+                          (!selectedBranch || student.branch === selectedBranch) &&
+                          (!selectedDivision || student.division === selectedDivision) &&
+                          (!selectedYear || student.year?.toString() === selectedYear) &&
+                          !enrolledStudentIds.includes(student.id)
+                        ).length} student(s) will be enrolled
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Individual Student Enrollment */}
+            {enrollmentMode === 'individual' && (
+              <>
+                {/* Search */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                  <Input
+                    placeholder="Search students by name or email..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10"
+                  />
+                </div>
+
+                {/* Available Students */}
+                <div className="space-y-2">
+                  <h3 className="font-semibold text-sm text-gray-700">
+                    Available Students ({availableStudents.length})
+                  </h3>
+                  
+                  {loadingStudents ? (
+                    <div className="text-center py-8">
+                      <p className="text-gray-500">Loading students...</p>
+                    </div>
+                  ) : availableStudents.length === 0 ? (
+                    <div className="text-center py-8 border-2 border-dashed border-gray-200 rounded-lg">
+                      <Users className="h-12 w-12 text-gray-400 mx-auto mb-3" />
+                      <p className="text-gray-600">
+                        {searchTerm ? 'No students match your search' : 'All students are already enrolled'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="border rounded-lg divide-y max-h-96 overflow-y-auto">
+                      {availableStudents.map((student) => {
+                        const isSelected = selectedStudentIds.includes(student.id);
+                        return (
+                          <label
+                            key={student.id}
+                            className={`flex items-center gap-3 p-3 cursor-pointer hover:bg-gray-50 transition-colors ${
+                              isSelected ? 'bg-blue-50' : ''
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleStudentSelection(student.id)}
+                              className="h-4 w-4 text-blue-600 rounded"
+                            />
+                            <div className="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
+                              <span className="text-gray-600 font-semibold">
+                                {student.name.charAt(0)}
+                              </span>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium truncate">{student.name}</p>
+                              <p className="text-sm text-gray-500 truncate">
+                                {student.email}
+                                {student.branch && ` • ${student.branch}`}
+                                {student.division && ` Div ${student.division}`}
+                                {student.year && ` • Year ${student.year}`}
+                              </p>
+                            </div>
+                            {isSelected && (
+                              <CheckCircle className="h-5 w-5 text-blue-600 flex-shrink-0" />
+                            )}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Selection Summary */}
+                {selectedStudentIds.length > 0 && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                    <p className="text-sm text-blue-900">
+                      <strong>{selectedStudentIds.length}</strong> student{selectedStudentIds.length !== 1 ? 's' : ''} selected
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
 
             {/* Already Enrolled Section */}
             {enrolledStudents.length > 0 && (
@@ -522,74 +775,17 @@ export default function ExamDetailPage() {
                   </h3>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {enrolledStudents.map((enrollment) => (
+                  {enrolledStudents.slice(0, 10).map((enrollment) => (
                     <Badge key={enrollment.id} variant="outline" className="bg-white">
                       {enrollment.student.name}
                     </Badge>
                   ))}
+                  {enrolledStudents.length > 10 && (
+                    <Badge variant="outline" className="bg-white">
+                      +{enrolledStudents.length - 10} more
+                    </Badge>
+                  )}
                 </div>
-              </div>
-            )}
-
-            {/* Available Students */}
-            <div className="space-y-2">
-              <h3 className="font-semibold text-sm text-gray-700">
-                Available Students ({availableStudents.length})
-              </h3>
-              
-              {loadingStudents ? (
-                <div className="text-center py-8">
-                  <p className="text-gray-500">Loading students...</p>
-                </div>
-              ) : availableStudents.length === 0 ? (
-                <div className="text-center py-8 border-2 border-dashed border-gray-200 rounded-lg">
-                  <Users className="h-12 w-12 text-gray-400 mx-auto mb-3" />
-                  <p className="text-gray-600">
-                    {searchTerm ? 'No students match your search' : 'All students are already enrolled'}
-                  </p>
-                </div>
-              ) : (
-                <div className="border rounded-lg divide-y max-h-96 overflow-y-auto">
-                  {availableStudents.map((student) => {
-                    const isSelected = selectedStudentIds.includes(student.id);
-                    return (
-                      <label
-                        key={student.id}
-                        className={`flex items-center gap-3 p-3 cursor-pointer hover:bg-gray-50 transition-colors ${
-                          isSelected ? 'bg-blue-50' : ''
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleStudentSelection(student.id)}
-                          className="h-4 w-4 text-blue-600 rounded"
-                        />
-                        <div className="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
-                          <span className="text-gray-600 font-semibold">
-                            {student.name.charAt(0)}
-                          </span>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium truncate">{student.name}</p>
-                          <p className="text-sm text-gray-500 truncate">{student.email}</p>
-                        </div>
-                        {isSelected && (
-                          <CheckCircle className="h-5 w-5 text-blue-600 flex-shrink-0" />
-                        )}
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Selection Summary */}
-            {selectedStudentIds.length > 0 && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                <p className="text-sm text-blue-900">
-                  <strong>{selectedStudentIds.length}</strong> student{selectedStudentIds.length !== 1 ? 's' : ''} selected
-                </p>
               </div>
             )}
 
@@ -601,6 +797,9 @@ export default function ExamDetailPage() {
                   setShowEnrollDialog(false);
                   setSelectedStudentIds([]);
                   setSearchTerm('');
+                  setSelectedBranch('');
+                  setSelectedDivision('');
+                  setSelectedYear('');
                 }}
                 disabled={enrolling}
               >
@@ -608,10 +807,17 @@ export default function ExamDetailPage() {
               </Button>
               <Button
                 onClick={handleEnrollStudents}
-                disabled={enrolling || selectedStudentIds.length === 0}
+                disabled={
+                  enrolling || 
+                  (enrollmentMode === 'individual' && selectedStudentIds.length === 0) ||
+                  (enrollmentMode === 'class' && !selectedBranch && !selectedDivision && !selectedYear)
+                }
                 className="bg-blue-600 hover:bg-blue-700"
               >
-                {enrolling ? 'Enrolling...' : `Enroll ${selectedStudentIds.length} Student${selectedStudentIds.length !== 1 ? 's' : ''}`}
+                {enrolling ? 'Enrolling...' : enrollmentMode === 'individual' 
+                  ? `Enroll ${selectedStudentIds.length} Student${selectedStudentIds.length !== 1 ? 's' : ''}`
+                  : 'Enroll Class'
+                }
               </Button>
             </div>
           </div>

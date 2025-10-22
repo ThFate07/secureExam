@@ -23,6 +23,11 @@ const registerSchema = z.object({
   password: z.string().min(6, "Password must be at least 6 characters"),
   confirmPassword: z.string(),
   role: z.enum(["student", "teacher"]),
+  // Student-specific fields (optional based on role)
+  branch: z.string().optional(),
+  division: z.string().optional(),
+  year: z.string().optional(),
+  rollNumber: z.string().optional(),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
   path: ["confirmPassword"],
@@ -60,8 +65,14 @@ export function AuthForm({ onLogin, onRegister }: AuthFormProps) {
       password: "",
       confirmPassword: "",
       role: "student",
+      branch: "",
+      division: "",
+      year: "",
+      rollNumber: "",
     },
   });
+
+  const selectedRole = registerForm.watch("role");
 
   const handleLogin = async (data: LoginForm) => {
     setIsLoading(true);
@@ -327,6 +338,71 @@ export function AuthForm({ onLogin, onRegister }: AuthFormProps) {
                   </p>
                 )}
               </div>
+
+              {/* Student-specific fields */}
+              {selectedRole === "student" && (
+                <div className="space-y-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                  <p className="text-sm font-medium text-blue-900">Class Information (Optional)</p>
+                  
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <label htmlFor="branch" className="text-xs font-medium text-gray-700">
+                        Branch
+                      </label>
+                      <Input
+                        id="branch"
+                        type="text"
+                        placeholder="e.g., CMPN, IT, EXTC"
+                        className="border-gray-300 text-sm"
+                        {...registerForm.register("branch")}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label htmlFor="division" className="text-xs font-medium text-gray-700">
+                        Division
+                      </label>
+                      <Input
+                        id="division"
+                        type="text"
+                        placeholder="e.g., A, B, C"
+                        className="border-gray-300 text-sm"
+                        {...registerForm.register("division")}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label htmlFor="year" className="text-xs font-medium text-gray-700">
+                        Year
+                      </label>
+                      <select
+                        id="year"
+                        className="flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900 focus-visible:ring-offset-2"
+                        {...registerForm.register("year")}
+                      >
+                        <option value="">Select year</option>
+                        <option value="1">Year 1</option>
+                        <option value="2">Year 2</option>
+                        <option value="3">Year 3</option>
+                        <option value="4">Year 4</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label htmlFor="rollNumber" className="text-xs font-medium text-gray-700">
+                        Roll Number
+                      </label>
+                      <Input
+                        id="rollNumber"
+                        type="text"
+                        placeholder="e.g., CMPN-A-001"
+                        className="border-gray-300 text-sm"
+                        {...registerForm.register("rollNumber")}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <Button
                 type="submit"

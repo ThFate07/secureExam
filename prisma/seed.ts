@@ -6,15 +6,37 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('🌱 Starting database seed...');
 
+  // Truncate all tables in reverse order of dependencies
+  console.log('🗑️  Truncating existing data...');
+  
+  try {
+    // Delete in order of dependencies (child tables first)
+    await prisma.auditLog.deleteMany({});
+    await prisma.message.deleteMany({});
+    await prisma.snapshot.deleteMany({});
+    await prisma.monitoringEvent.deleteMany({});
+    await prisma.submission.deleteMany({});
+    await prisma.answer.deleteMany({});
+    await prisma.attempt.deleteMany({});
+    await prisma.enrollment.deleteMany({});
+    await prisma.examQuestion.deleteMany({});
+    await prisma.exam.deleteMany({});
+    await prisma.question.deleteMany({});
+    await prisma.user.deleteMany({});
+    
+    console.log('✅ Database truncated successfully');
+  } catch (error) {
+    console.error('⚠️  Error truncating database:', error);
+    throw error;
+  }
+
   // Create users
   console.log('Creating users...');
   const teacherPassword = await bcrypt.hash('teacher123', 10);
   const studentPassword = await bcrypt.hash('student123', 10);
 
-  const teacher = await prisma.user.upsert({
-    where: { email: 'teacher@example.com' },
-    update: {},
-    create: {
+  const teacher = await prisma.user.create({
+    data: {
       email: 'teacher@example.com',
       name: 'Prof. Sarah Johnson',
       passwordHash: teacherPassword,
@@ -22,27 +44,56 @@ async function main() {
     },
   });
 
-  const student1 = await prisma.user.upsert({
-    where: { email: 'student1@example.com' },
-    update: {},
-    create: {
+  const student1 = await prisma.user.create({
+    data: {
       email: 'student1@example.com',
       name: 'John Smith',
       passwordHash: studentPassword,
       role: 'STUDENT',
+      branch: 'CMPN',
+      division: 'A',
+      year: 2,
+      rollNumber: 'CMPN-A-001',
     },
   });
 
-  const student2 = await prisma.user.upsert({
-    where: { email: 'student2@example.com' },
-    update: {},
-    create: {
+  const student2 = await prisma.user.create({
+    data: {
       email: 'student2@example.com',
       name: 'Emma Davis',
       passwordHash: studentPassword,
       role: 'STUDENT',
+      branch: 'CMPN',
+      division: 'A',
+      year: 2,
+      rollNumber: 'CMPN-A-002',
     },
   });
+
+  // Create additional students for testing class-based enrollment
+  const additionalStudents = [
+    { email: 'student3@example.com', name: 'Michael Brown', branch: 'CMPN', division: 'B', year: 2, rollNumber: 'CMPN-B-001' },
+    { email: 'student4@example.com', name: 'Sarah Wilson', branch: 'CMPN', division: 'B', year: 2, rollNumber: 'CMPN-B-002' },
+    { email: 'student5@example.com', name: 'James Taylor', branch: 'IT', division: 'A', year: 2, rollNumber: 'IT-A-001' },
+    { email: 'student6@example.com', name: 'Emily Anderson', branch: 'IT', division: 'A', year: 2, rollNumber: 'IT-A-002' },
+    { email: 'student7@example.com', name: 'David Martinez', branch: 'EXTC', division: 'A', year: 3, rollNumber: 'EXTC-A-001' },
+    { email: 'student8@example.com', name: 'Olivia Garcia', branch: 'EXTC', division: 'B', year: 3, rollNumber: 'EXTC-B-001' },
+  ];
+
+  for (const student of additionalStudents) {
+    await prisma.user.create({
+      data: {
+        email: student.email,
+        name: student.name,
+        passwordHash: studentPassword,
+        role: 'STUDENT',
+        branch: student.branch,
+        division: student.division,
+        year: student.year,
+        rollNumber: student.rollNumber,
+      },
+    });
+  }
 
   console.log('✅ Users created');
 
