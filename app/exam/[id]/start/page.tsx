@@ -15,14 +15,26 @@ export default function StartExamPage() {
   const { user } = useAuth();
   const examId = params.id as string;
   
+  interface ExamSecuritySettings {
+    requireWebcam?: boolean;
+    enableFullscreenMode?: boolean;
+    preventTabSwitching?: boolean;
+    disableCopyPaste?: boolean;
+    disableRightClick?: boolean;
+    [key: string]: unknown;
+  }
   interface ExamQuestion { id: string; points: number; [k: string]: unknown }
-  interface ExamData { id: string; title: string; description: string; duration: number; totalQuestions: number; questions: ExamQuestion[] }
+  interface ExamData { id: string; title: string; description: string; duration: number; totalQuestions: number; questions: ExamQuestion[]; settings?: ExamSecuritySettings }
   const [exam, setExam] = useState<ExamData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cameraPermission, setCameraPermission] = useState<boolean | null>(null);
   const [fullscreenSupported, setFullscreenSupported] = useState(false);
   const [isReady, setIsReady] = useState(false);
+  
+  // Determine what's actually required based on exam settings
+  const requiresCamera = exam?.settings?.requireWebcam ?? false;
+  const requiresFullscreen = exam?.settings?.enableFullscreenMode ?? false;
 
   useEffect(() => {
     // Fetch exam from API (without correct answers for security)
@@ -41,7 +53,8 @@ export default function StartExamPage() {
             questions: examData.questions?.map((q: ExamQuestion) => ({ 
               id: q.id, 
               points: q.points 
-            })) || []
+            })) || [],
+            settings: examData.settings || {}
           });
         } else {
           setError('Exam not found');
@@ -55,13 +68,26 @@ export default function StartExamPage() {
     };
 
     fetchExam();
-
-    // Check fullscreen support
-    setFullscreenSupported(!!document.documentElement.requestFullscreen);
-
-    // Request camera permission
-    checkCameraPermission();
   }, [examId]);
+
+  // Check requirements based on exam settings
+  useEffect(() => {
+    if (!exam?.settings) return;
+
+    // Check fullscreen support if required
+    if (requiresFullscreen) {
+      setFullscreenSupported(!!document.documentElement.requestFullscreen);
+    } else {
+      setFullscreenSupported(true); // Not required, so mark as supported
+    }
+
+    // Check camera permission if required
+    if (requiresCamera) {
+      checkCameraPermission();
+    } else {
+      setCameraPermission(true); // Not required, so mark as granted
+    }
+  }, [exam, requiresCamera, requiresFullscreen]);
 
   const checkCameraPermission = async () => {
     try {
@@ -75,8 +101,8 @@ export default function StartExamPage() {
 
   const startExam = async () => {
     try {
-      // Enter fullscreen mode
-      if (fullscreenSupported) {
+      // Enter fullscreen mode only if required and supported
+      if (requiresFullscreen && fullscreenSupported) {
         await document.documentElement.requestFullscreen();
       }
       
@@ -88,9 +114,11 @@ export default function StartExamPage() {
   };
 
   useEffect(() => {
-    // Check if all requirements are met
-    setIsReady(cameraPermission === true && fullscreenSupported);
-  }, [cameraPermission, fullscreenSupported]);
+    // Check if all requirements are met based on what's actually required
+    const cameraReady = !requiresCamera || cameraPermission === true;
+    const fullscreenReady = !requiresFullscreen || fullscreenSupported;
+    setIsReady(cameraReady && fullscreenReady);
+  }, [cameraPermission, fullscreenSupported, requiresCamera, requiresFullscreen]);
 
   if (loading || !exam) {
     if (loading) {
@@ -161,54 +189,60 @@ export default function StartExamPage() {
           </CardContent>
         </Card>
 
-        {/* System Requirements Check */}
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>System Requirements</CardTitle>
-            <CardDescription>
-              All requirements must be met before you can start the exam
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Camera Permission */}
-            <div className="flex items-center justify-between p-3 border rounded-lg">
-              <div className="flex items-center">
-                <Camera className="w-5 h-5 mr-3 text-gray-600" />
-                <div>
-                  <p className="font-medium">Camera Access</p>
-                  <p className="text-sm text-gray-600">Required for proctoring</p>
+        {/* System Requirements Check - Only show if there are actual requirements */}
+        {(requiresCamera || requiresFullscreen) && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>System Requirements</CardTitle>
+              <CardDescription>
+                All requirements must be met before you can start the exam
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Camera Permission - Only show if required */}
+              {requiresCamera && (
+                <div className="flex items-center justify-between p-3 border rounded-lg">
+                  <div className="flex items-center">
+                    <Camera className="w-5 h-5 mr-3 text-gray-600" />
+                    <div>
+                      <p className="font-medium">Camera Access</p>
+                      <p className="text-sm text-gray-600">Required for proctoring</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center">
+                    {cameraPermission === true ? (
+                      <CheckCircle className="w-5 h-5 text-green-600" />
+                    ) : cameraPermission === false ? (
+                      <AlertTriangle className="w-5 h-5 text-red-600" />
+                    ) : (
+                      <div className="w-5 h-5 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin"></div>
+                    )}
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center">
-                {cameraPermission === true ? (
-                  <CheckCircle className="w-5 h-5 text-green-600" />
-                ) : cameraPermission === false ? (
-                  <AlertTriangle className="w-5 h-5 text-red-600" />
-                ) : (
-                  <div className="w-5 h-5 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin"></div>
-                )}
-              </div>
-            </div>
+              )}
 
-            {/* Fullscreen Support */}
-            <div className="flex items-center justify-between p-3 border rounded-lg">
-              <div className="flex items-center">
-                <div className="w-5 h-5 mr-3 border border-gray-400 rounded bg-gray-100"></div>
-                <div>
-                  <p className="font-medium">Fullscreen Mode</p>
-                  <p className="text-sm text-gray-600">Browser must support fullscreen</p>
+              {/* Fullscreen Support - Only show if required */}
+              {requiresFullscreen && (
+                <div className="flex items-center justify-between p-3 border rounded-lg">
+                  <div className="flex items-center">
+                    <div className="w-5 h-5 mr-3 border border-gray-400 rounded bg-gray-100"></div>
+                    <div>
+                      <p className="font-medium">Fullscreen Mode</p>
+                      <p className="text-sm text-gray-600">Browser must support fullscreen</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center">
+                    {fullscreenSupported ? (
+                      <CheckCircle className="w-5 h-5 text-green-600" />
+                    ) : (
+                      <AlertTriangle className="w-5 h-5 text-red-600" />
+                    )}
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center">
-                {fullscreenSupported ? (
-                  <CheckCircle className="w-5 h-5 text-green-600" />
-                ) : (
-                  <AlertTriangle className="w-5 h-5 text-red-600" />
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Exam Rules */}
         <Card className="mb-6">
@@ -217,37 +251,56 @@ export default function StartExamPage() {
           </CardHeader>
           <CardContent>
             <ul className="space-y-2 text-sm">
-              <li className="flex items-start">
-                <span className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></span>
-                You must remain in fullscreen mode throughout the exam
-              </li>
-              <li className="flex items-start">
-                <span className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></span>
-                Your camera will record you during the entire exam
-              </li>
-              <li className="flex items-start">
-                <span className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></span>
-                Switching tabs or windows is not allowed and will be flagged
-              </li>
-              <li className="flex items-start">
-                <span className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></span>
-                Copy/paste and right-click are disabled during the exam
-              </li>
+              {requiresFullscreen && (
+                <li className="flex items-start">
+                  <span className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></span>
+                  You must remain in fullscreen mode throughout the exam
+                </li>
+              )}
+              {requiresCamera && (
+                <li className="flex items-start">
+                  <span className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></span>
+                  Your camera will record you during the entire exam
+                </li>
+              )}
+              {exam?.settings?.preventTabSwitching && (
+                <li className="flex items-start">
+                  <span className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></span>
+                  Switching tabs or windows is not allowed and will be flagged
+                </li>
+              )}
+              {(exam?.settings?.disableCopyPaste || exam?.settings?.disableRightClick) && (
+                <li className="flex items-start">
+                  <span className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></span>
+                  {exam?.settings?.disableCopyPaste && exam?.settings?.disableRightClick 
+                    ? 'Copy/paste and right-click are disabled during the exam'
+                    : exam?.settings?.disableCopyPaste 
+                      ? 'Copy/paste is disabled during the exam'
+                      : 'Right-click is disabled during the exam'}
+                </li>
+              )}
               <li className="flex items-start">
                 <span className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></span>
                 The exam will auto-submit when time expires
               </li>
+              {!requiresFullscreen && !requiresCamera && !exam?.settings?.preventTabSwitching && 
+               !exam?.settings?.disableCopyPaste && !exam?.settings?.disableRightClick && (
+                <li className="flex items-start">
+                  <span className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></span>
+                  Complete all questions to the best of your ability
+                </li>
+              )}
             </ul>
           </CardContent>
         </Card>
 
-        {/* Warnings */}
-        {(!cameraPermission || !fullscreenSupported) && (
+        {/* Warnings - Only show if requirements are not met */}
+        {((requiresCamera && !cameraPermission) || (requiresFullscreen && !fullscreenSupported)) && (
           <Alert variant="destructive" className="mb-6">
             <AlertTriangle className="h-4 w-4" />
             <AlertDescription>
-              {!cameraPermission && "Camera access is required for this exam. Please allow camera permissions and refresh the page. "}
-              {!fullscreenSupported && "Your browser does not support fullscreen mode. Please use a modern browser like Chrome, Firefox, or Safari."}
+              {requiresCamera && !cameraPermission && "Camera access is required for this exam. Please allow camera permissions and refresh the page. "}
+              {requiresFullscreen && !fullscreenSupported && "Your browser does not support fullscreen mode. Please use a modern browser like Chrome, Firefox, or Safari."}
             </AlertDescription>
           </Alert>
         )}

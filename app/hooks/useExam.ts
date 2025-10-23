@@ -51,103 +51,138 @@ export function useExamTimer({ initialTime, onTimeUp, isActive = true }: UseExam
 
 interface UseAntiCheatProps {
   onViolation: (violation: string) => void;
-  enabled?: boolean;
+  config?: {
+    preventTabSwitching?: boolean;
+    lockdownBrowser?: boolean;
+    enableFullscreenMode?: boolean;
+  };
 }
 
-export function useAntiCheat({ onViolation, enabled = true }: UseAntiCheatProps) {
+export function useAntiCheat({ onViolation, config = {} }: UseAntiCheatProps) {
   const [violations, setViolations] = useState<string[]>([]);
 
+  // Default all to false if not provided
+  const {
+    preventTabSwitching = false,
+    lockdownBrowser = false,
+    enableFullscreenMode = false,
+  } = config;
+
   useEffect(() => {
-    if (!enabled) return;
+    // If no features are enabled, don't set up any listeners
+    if (!preventTabSwitching && !lockdownBrowser && !enableFullscreenMode) return;
 
-    // Prevent right-click context menu
-    const handleContextMenu = (e: MouseEvent) => {
-      e.preventDefault();
-      onViolation("Right-click detected");
-    };
+    const handlers: (() => void)[] = [];
 
-    // Prevent keyboard shortcuts
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Prevent F12, Ctrl+Shift+I, Ctrl+Shift+J, Ctrl+U
-      if (
-        e.key === "F12" ||
-        (e.ctrlKey && e.shiftKey && (e.key === "I" || e.key === "J")) ||
-        (e.ctrlKey && e.key === "u")
-      ) {
+    // Lockdown Browser Mode - Comprehensive restrictions
+    if (lockdownBrowser) {
+      // Prevent right-click context menu
+      const handleContextMenu = (e: MouseEvent) => {
         e.preventDefault();
-        onViolation("Developer tools access attempted");
-      }
+        onViolation("Right-click detected");
+      };
 
-      // Prevent Alt+Tab
-      if (e.altKey && e.key === "Tab") {
+      // Prevent keyboard shortcuts for lockdown
+      const handleKeyDown = (e: KeyboardEvent) => {
+        // Prevent F12, Ctrl+Shift+I, Ctrl+Shift+J, Ctrl+U (Developer tools)
+        if (
+          e.key === "F12" ||
+          (e.ctrlKey && e.shiftKey && (e.key === "I" || e.key === "J")) ||
+          (e.ctrlKey && e.key === "u")
+        ) {
+          e.preventDefault();
+          onViolation("Developer tools access attempted");
+        }
+
+        // Prevent Alt+Tab
+        if (e.altKey && e.key === "Tab") {
+          e.preventDefault();
+          onViolation("Alt+Tab detected");
+        }
+
+        // Prevent Ctrl+C, Ctrl+V, Ctrl+X
+        if (e.ctrlKey && (e.key === "c" || e.key === "v" || e.key === "x")) {
+          e.preventDefault();
+          onViolation("Copy/Paste/Cut attempted");
+        }
+      };
+
+      // Prevent print
+      const handleBeforePrint = (e: Event) => {
         e.preventDefault();
-        onViolation("Alt+Tab detected");
-      }
+        onViolation("Print attempt detected");
+      };
 
-      // Prevent Ctrl+C, Ctrl+V, Ctrl+X
-      if (e.ctrlKey && (e.key === "c" || e.key === "v" || e.key === "x")) {
-        e.preventDefault();
-        onViolation("Copy/Paste/Cut attempted");
-      }
-    };
+      document.addEventListener("contextmenu", handleContextMenu);
+      document.addEventListener("keydown", handleKeyDown);
+      window.addEventListener("beforeprint", handleBeforePrint);
 
-    // Detect tab switching/window blur
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        onViolation("Tab switch or window minimized");
-      }
-    };
+      handlers.push(() => {
+        document.removeEventListener("contextmenu", handleContextMenu);
+        document.removeEventListener("keydown", handleKeyDown);
+        window.removeEventListener("beforeprint", handleBeforePrint);
+      });
+    }
 
-    const handleWindowBlur = () => {
-      onViolation("Window lost focus");
-    };
+    // Prevent Tab Switching - Monitor tab/window changes
+    if (preventTabSwitching) {
+      // Detect tab switching/window blur
+      const handleVisibilityChange = () => {
+        if (document.hidden) {
+          onViolation("Tab switch or window minimized");
+        }
+      };
 
-    // Prevent print
-    const handleBeforePrint = (e: Event) => {
-      e.preventDefault();
-      onViolation("Print attempt detected");
-    };
+      const handleWindowBlur = () => {
+        onViolation("Window lost focus");
+      };
 
-    document.addEventListener("contextmenu", handleContextMenu);
-    document.addEventListener("keydown", handleKeyDown);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("blur", handleWindowBlur);
-    window.addEventListener("beforeprint", handleBeforePrint);
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+      window.addEventListener("blur", handleWindowBlur);
 
-    // Request fullscreen
-    const requestFullscreen = async () => {
-      try {
-        await document.documentElement.requestFullscreen();
-      } catch (error) {
-        onViolation("Fullscreen mode not available");
-      }
-    };
+      handlers.push(() => {
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+        window.removeEventListener("blur", handleWindowBlur);
+      });
+    }
 
-    requestFullscreen();
+    // Force Fullscreen Mode
+    if (enableFullscreenMode) {
+      // Request fullscreen
+      const requestFullscreen = async () => {
+        try {
+          await document.documentElement.requestFullscreen();
+        } catch {
+          onViolation("Fullscreen mode not available");
+        }
+      };
 
-    // Monitor fullscreen exit
-    const handleFullscreenChange = () => {
-      if (!document.fullscreenElement) {
-        onViolation("Fullscreen mode exited");
-      }
-    };
+      requestFullscreen();
 
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
+      // Monitor fullscreen exit
+      const handleFullscreenChange = () => {
+        if (!document.fullscreenElement) {
+          onViolation("Fullscreen mode exited");
+        }
+      };
 
+      document.addEventListener("fullscreenchange", handleFullscreenChange);
+
+      handlers.push(() => {
+        document.removeEventListener("fullscreenchange", handleFullscreenChange);
+        
+        // Exit fullscreen on cleanup
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(console.error);
+        }
+      });
+    }
+
+    // Cleanup function
     return () => {
-      document.removeEventListener("contextmenu", handleContextMenu);
-      document.removeEventListener("keydown", handleKeyDown);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("blur", handleWindowBlur);
-      window.removeEventListener("beforeprint", handleBeforePrint);
-      document.removeEventListener("fullscreenchange", handleFullscreenChange);
-      
-      // Exit fullscreen on cleanup
-      if (document.fullscreenElement) {
-        document.exitFullscreen().catch(console.error);
-      }
+      handlers.forEach(cleanup => cleanup());
     };
-  }, [enabled, onViolation]);
+  }, [preventTabSwitching, lockdownBrowser, enableFullscreenMode, onViolation]);
 
   const addViolation = useCallback((violation: string) => {
     setViolations(prev => [...prev, violation]);

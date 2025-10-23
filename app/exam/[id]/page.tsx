@@ -4,7 +4,11 @@ import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "../../hooks/useAuth";
 import { useExamTimer, useAntiCheat, useWebcam, useExamSession } from "../../hooks/useExam";
-import { sendMonitoringEvent } from "../../lib/monitoringChannel";
+// Use WebSocket-based monitoring for cross-device real-time updates
+import { 
+  sendMonitoringEvent as sendWSMonitoringEvent,
+  joinExamAsStudent
+} from "../../lib/monitoringWebSocket";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Alert, AlertDescription } from "../../components/ui/alert";
@@ -71,7 +75,7 @@ export default function ExamInterface() {
         : /blur|focus|tab/i.test(violation)
         ? 'medium'
         : 'low';
-      sendMonitoringEvent({
+      sendWSMonitoringEvent({
         type: 'violation',
         payload: {
           studentId: user.id,
@@ -131,7 +135,11 @@ export default function ExamInterface() {
   // Initialize anti-cheat monitoring (runs for side effects)
   useAntiCheat({
     onViolation: handleViolation,
-    enabled: exam?.settings.preventTabSwitching || false,
+    config: {
+      preventTabSwitching: exam?.settings.preventTabSwitching || false,
+      lockdownBrowser: exam?.settings.lockdownBrowser || false,
+      enableFullscreenMode: exam?.settings.enableFullscreenMode || false,
+    },
   });
 
   const webcam = useWebcam({
@@ -148,7 +156,7 @@ export default function ExamInterface() {
   // Broadcast question changes
   useEffect(() => {
     if (!exam || !user) return;
-    sendMonitoringEvent({
+    sendWSMonitoringEvent({
       type: 'question',
       payload: {
         studentId: user.id,
@@ -162,9 +170,10 @@ export default function ExamInterface() {
   // Heartbeat (activity ping)
   useEffect(() => {
     if (!exam || !user) return;
+    console.log('[Exam] Starting heartbeat for student:', user.id, 'exam:', exam.id);
     const interval = setInterval(() => {
-      sendMonitoringEvent({
-        type: 'heartbeat',
+      const heartbeatEvent = {
+        type: 'heartbeat' as const,
         payload: {
           studentId: user.id,
           examId: exam.id,
@@ -172,15 +181,20 @@ export default function ExamInterface() {
           webcamActive: webcam.isActive,
           timestamp: Date.now(),
         },
-      });
+      };
+      console.log('[Exam] Sending heartbeat:', heartbeatEvent);
+      sendWSMonitoringEvent(heartbeatEvent);
     }, 5000);
-    return () => clearInterval(interval);
+    return () => {
+      console.log('[Exam] Stopping heartbeat');
+      clearInterval(interval);
+    };
   }, [exam, user, examSessionData.currentQuestionIndex, webcam.isActive]);
 
   // Webcam status change
   useEffect(() => {
     if (!exam || !user) return;
-    sendMonitoringEvent({
+    sendWSMonitoringEvent({
       type: 'webcam',
       payload: {
         studentId: user.id,
@@ -190,6 +204,17 @@ export default function ExamInterface() {
       },
     });
   }, [webcam.isActive, exam, user]);
+
+  // Join the monitoring room as a student once exam and user are available
+  useEffect(() => {
+    if (!exam || !user) return;
+    console.log('[Exam] Joining exam monitoring room, studentId:', user.id, 'examId:', exam.id);
+    joinExamAsStudent(user.id, exam.id);
+    
+    return () => {
+      console.log('[Exam] Student leaving exam page');
+    };
+  }, [exam, user]);
 
   if (loading) {
     return (

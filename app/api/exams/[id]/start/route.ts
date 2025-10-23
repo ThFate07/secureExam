@@ -116,7 +116,7 @@ export async function GET(
       const serializedExam: SerializedExam = {
         id: exam.id,
         title: exam.title,
-        description: exam.description,
+  description: exam.description ?? '',
         teacherId: exam.createdById,
         duration: exam.duration,
         startTime: exam.startTime?.toISOString() ?? null,
@@ -154,7 +154,7 @@ export async function GET(
     const serializedExam: SerializedExam = {
       id: exam.id,
       title: exam.title,
-      description: exam.description,
+  description: exam.description ?? '',
       teacherId: exam.createdById,
       duration: exam.duration,
       startTime: exam.startTime?.toISOString() ?? null,

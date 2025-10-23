@@ -102,6 +102,7 @@ const DEFAULT_SETTINGS: ExamSettings = {
   requireWebcam: false,
   enableScreenMonitoring: false,
   lockdownBrowser: false,
+  enableFullscreenMode: false,
 };
 
 const safeDate = (value: string | null | undefined): Date | null => {

@@ -4,7 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "../../../../../hooks/useAuth";
 import { MonitoringData } from "../../../../../types";
-import { subscribeMonitoringEvents, MonitoringEvent } from "../../../../../lib/monitoringChannel";
+import { subscribeMonitoringEvents, type MonitoringEvent, joinExamAsTeacher } from "../../../../../lib/monitoringWebSocket";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../../../components/ui/card";
 import { Button } from "../../../../../components/ui/button";
 import { ArrowLeft } from "lucide-react";
@@ -20,6 +20,10 @@ export default function ExamSpecificMonitor() {
     if (!loading && (!isAuthenticated || user?.role !== 'teacher')) {
       router.push('/auth');
       return;
+    }
+    // Join monitoring for this specific exam
+    if (isAuthenticated && user?.role === 'teacher' && examId) {
+      joinExamAsTeacher(examId);
     }
     const unsub = subscribeMonitoringEvents((ev: MonitoringEvent) => {
       if (ev.payload.examId !== examId) return;

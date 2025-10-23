@@ -73,15 +73,22 @@ const SecuritySettings: React.FC<SecuritySettingsProps> = ({ settings, onChange 
               />
               <span className="text-sm">Prevent tab switching</span>
             </Label>
-            <Label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={settings.lockdownBrowser}
-                onChange={(e) => updateSetting('lockdownBrowser', e.target.checked)}
-              />
-              <span className="text-sm">Lockdown browser mode</span>
-            </Label>
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={settings.lockdownBrowser}
+                  onChange={(e) => updateSetting('lockdownBrowser', e.target.checked)}
+                />
+                <span className="text-sm font-medium">Lockdown browser mode</span>
+              </Label>
+              <p className="text-xs text-gray-600 ml-6 leading-relaxed">
+                Enables comprehensive browser restrictions: blocks developer tools (F12, Ctrl+Shift+I/J), 
+                prevents copy/paste/cut (Ctrl+C/V/X), disables right-click context menu, 
+                blocks Alt+Tab window switching, and prevents printing.
+              </p>
+            </div>
             <Label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -90,15 +97,6 @@ const SecuritySettings: React.FC<SecuritySettingsProps> = ({ settings, onChange 
                 onChange={(e) => updateSetting('enableFullscreenMode', e.target.checked)}
               />
               <span className="text-sm">Force fullscreen mode</span>
-            </Label>
-            <Label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={settings.disableDevTools}
-                onChange={(e) => updateSetting('disableDevTools', e.target.checked)}
-              />
-              <span className="text-sm">Disable developer tools</span>
             </Label>
           </div>
         </div>

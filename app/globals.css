@@ -162,6 +162,18 @@ input[type="radio"]:focus {
   box-shadow: 0 0 0 2px rgba(107, 114, 128, 0.3) !important;
 }
 
+/* Restore checkbox appearance */
+input[type="checkbox"] {
+  -webkit-appearance: checkbox !important;
+  appearance: checkbox !important;
+  cursor: pointer;
+}
+
+input[type="checkbox"]:focus {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
 /* Ensure consistent focus styling */
 .focus-style {
   transition: all 0.2s ease-in-out;

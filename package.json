@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "ts-node --project tsconfig.server.json server.ts",
     "build": "next build --turbopack",
-    "start": "next start",
+    "start": "ts-node --project tsconfig.server.json server.ts",
     "lint": "eslint"
   },
   "prisma": {

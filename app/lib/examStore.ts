@@ -17,7 +17,7 @@ export interface ExamSecuritySettings {
   preventTabSwitching: boolean;
   requireWebcam: boolean;
   enableScreenMonitoring: boolean;
-  lockdownBrowser: boolean;
+  lockdownBrowser: boolean; // Includes: dev tools blocking, copy/paste prevention, right-click disable, Alt+Tab block, print prevention
   disableRightClick: boolean;
   disableCopyPaste: boolean;
   shuffleQuestions: boolean;
@@ -26,7 +26,6 @@ export interface ExamSecuritySettings {
   allowReview: boolean;
   maxTabSwitchWarnings: number;
   enableFullscreenMode: boolean;
-  disableDevTools: boolean;
 }
 
 export interface StoredExam {
@@ -117,7 +116,6 @@ export function createExam(partial: Partial<StoredExam>): StoredExam {
     allowReview: true,
     maxTabSwitchWarnings: 3,
     enableFullscreenMode: false,
-    disableDevTools: false,
   };
   const created: StoredExam = {
     id: partial.id ?? `exam_${Math.random().toString(36).slice(2, 8)}`,

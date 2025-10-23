@@ -41,6 +41,7 @@ export interface ExamSettings {
   requireWebcam: boolean;
   enableScreenMonitoring: boolean;
   lockdownBrowser: boolean;
+  enableFullscreenMode: boolean;
 }
 
 export interface ExamAttempt {

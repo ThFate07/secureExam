@@ -309,6 +309,7 @@ export default function ExamDetailPage() {
       const result = await api.exams.publish(exam.id);
       setExam(result.exam);
       alert('Exam published successfully! It is now live.');
+      router.push('/dashboard/teacher')
     } catch (error) {
       console.error('Error publishing exam:', error);
       alert(`Failed to publish exam: ${error instanceof Error ? error.message : 'Unknown error'}`);

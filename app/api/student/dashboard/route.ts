@@ -98,7 +98,7 @@ export async function GET(request: NextRequest) {
     const serializeExam = (exam: (typeof exams)[number]): SerializedExam => ({
       id: exam.id,
       title: exam.title,
-      description: exam.description,
+      description: exam.description ?? '',
       teacherId: exam.createdById,
       duration: exam.duration,
       startTime: exam.startTime?.toISOString() ?? null,

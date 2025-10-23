@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../../../hooks/useAuth";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Button } from "../../../components/ui/button";
-// import { Alert, AlertDescription } from "../../../components/ui/alert"; // currently unused
 import { 
   Eye, 
   Users, 
@@ -14,10 +13,23 @@ import {
   Camera, 
   Flag,
   Activity,
-  Shield
+  Shield,
+  Wifi,
+  WifiOff
 } from "lucide-react";
 import { MonitoringData, FlaggedActivity } from "../../../types";
-import { subscribeMonitoringEvents, MonitoringEvent } from "../../../lib/monitoringChannel";
+import { 
+  subscribeMonitoringEvents, 
+  subscribeStudentJoined,
+  subscribeStudentLeft,
+  subscribeStudentInactive,
+  subscribeActiveStudents,
+  joinExamAsTeacher,
+  disconnectMonitoring,
+  sendMessageToStudent,
+  isMonitoringConnected,
+  type MonitoringEvent 
+} from "../../../lib/monitoringWebSocket";
 
 export default function TeacherMonitoringDashboard() {
   const { user, isAuthenticated, loading } = useAuth();
@@ -25,15 +37,25 @@ export default function TeacherMonitoringDashboard() {
   const [activeStudents, setActiveStudents] = useState<MonitoringData[]>([]);
   const [selectedStudent, setSelectedStudent] = useState<MonitoringData | null>(null);
   const [message, setMessage] = useState("");
-  const unsubRef = useRef<(() => void) | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [selectedExamId] = useState<string>("default-exam-id"); // In production, get from URL or selection
 
   const handleIncomingEvent = useCallback((event: MonitoringEvent) => {
+    console.log('[Monitor] Received event:', event);
+    console.log('[Monitor] Event type:', event.type, 'from student:', event.payload?.studentId, 'exam:', event.payload?.examId);
+    
+    if (!event || !event.type || !event.payload) {
+      console.error('[Monitor] Invalid event received:', event);
+      return;
+    }
+    
     setActiveStudents(prev => {
       const list = [...prev];
       const { type, payload } = event;
       const key = `${payload.examId}-${payload.studentId}`;
       let recordIndex = list.findIndex(s => s.examId === payload.examId && s.studentId === payload.studentId);
       if (recordIndex === -1) {
+        console.log('[Monitor] Creating new student record:', payload.studentId, 'exam:', payload.examId);
         list.push({
           studentId: payload.studentId,
           examId: payload.examId,
@@ -83,17 +105,81 @@ export default function TeacherMonitoringDashboard() {
       return;
     }
 
-    // Subscribe to real-time (tab-based) events
-    if (!unsubRef.current) {
-      unsubRef.current = subscribeMonitoringEvents(handleIncomingEvent);
-    }
+    if (!isAuthenticated || user?.role !== 'teacher') return;
 
-    // No demo data seeding - real data will come from monitoring events
-    
+    console.log('[Monitor] Initializing monitoring dashboard for exam:', selectedExamId);
+
+    // Subscribe to monitoring events FIRST (before joining)
+    const unsubMonitoring = subscribeMonitoringEvents(handleIncomingEvent);
+
+    // Subscribe to active students list
+    const unsubActiveStudents = subscribeActiveStudents((students) => {
+      console.log('[Monitor] Received active students list:', students);
+      // Initialize student records from active students list
+      setActiveStudents(prev => {
+        const newStudents = [...prev];
+        students.forEach(s => {
+          const exists = newStudents.find(existing => 
+            existing.studentId === s.studentId && existing.examId === s.examId
+          );
+          if (!exists) {
+            console.log('[Monitor] Adding student from active list:', s.studentId);
+            newStudents.push({
+              studentId: s.studentId,
+              examId: s.examId,
+              attemptId: `${s.examId}-${s.studentId}`,
+              isActive: true,
+              lastActivity: new Date(s.lastActivity),
+              webcamEnabled: false,
+              currentQuestion: 1,
+              flaggedActivities: [],
+              warningsCount: 0,
+            });
+          }
+        });
+        return newStudents;
+      });
+    });
+
+    // Subscribe to student join events
+    const unsubJoined = subscribeStudentJoined((event) => {
+      console.log('[Monitor] Student joined:', event.studentId);
+      // Student will send heartbeat immediately, so we don't need to create entry here
+    });
+
+    // Subscribe to student leave events
+    const unsubLeft = subscribeStudentLeft((event) => {
+      console.log('[Monitor] Student left:', event.studentId);
+      setActiveStudents(prev => prev.filter(s => s.studentId !== event.studentId));
+    });
+
+    // Subscribe to student inactive events
+    const unsubInactive = subscribeStudentInactive((event) => {
+      console.log('[Monitor] Student inactive:', event.studentId);
+      setActiveStudents(prev => prev.map(s => 
+        s.studentId === event.studentId ? { ...s, isActive: false } : s
+      ));
+    });
+
+    // THEN join exam monitoring as teacher via WebSocket (after all subscriptions are set up)
+    joinExamAsTeacher(selectedExamId);
+
+    // Update connection status
+    const checkConnection = setInterval(() => {
+      setIsConnected(isMonitoringConnected());
+    }, 1000);
+
     return () => {
-      unsubRef.current?.();
+      console.log('[Monitor] Cleaning up monitoring dashboard');
+      clearInterval(checkConnection);
+      unsubMonitoring();
+      unsubActiveStudents();
+      unsubJoined();
+      unsubLeft();
+      unsubInactive();
+      disconnectMonitoring();
     };
-  }, [user, isAuthenticated, loading, router, handleIncomingEvent, activeStudents.length]);
+  }, [user, isAuthenticated, loading, router, handleIncomingEvent, selectedExamId]);
 
 
   const inferActivityType = (desc: string): FlaggedActivity['type'] => {
@@ -148,7 +234,8 @@ export default function TeacherMonitoringDashboard() {
   const sendMessage = (studentId: string) => {
     if (!message.trim()) return;
     
-    // In real app, this would send message via WebSocket
+    // Send message via WebSocket
+    sendMessageToStudent(studentId, selectedExamId, message);
     console.log(`Sending message to ${studentId}: ${message}`);
     setMessage("");
     alert(`Message sent to ${getStudentName(studentId)}`);
@@ -178,12 +265,29 @@ export default function TeacherMonitoringDashboard() {
     <div className="space-y-6">
       {/* Header */}
       <div className="bg-white rounded-lg shadow-sm p-6">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          Real-time Monitoring Dashboard
-        </h1>
-        <p className="text-gray-600">
-          Monitor student activities during the examination in real-time.
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">
+              Real-time Monitoring Dashboard
+            </h1>
+            <p className="text-gray-600">
+              Monitor student activities during the examination in real-time.
+            </p>
+          </div>
+          <div className="flex items-center space-x-2">
+            {isConnected ? (
+              <>
+                <Wifi className="h-5 w-5 text-green-600" />
+                <span className="text-sm text-green-600 font-medium">Connected</span>
+              </>
+            ) : (
+              <>
+                <WifiOff className="h-5 w-5 text-red-600" />
+                <span className="text-sm text-red-600 font-medium">Disconnected</span>
+              </>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Statistics */}

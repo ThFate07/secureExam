@@ -47,7 +47,6 @@ const CreateExamPage: React.FC = () => {
     allowReview: true,
     maxTabSwitchWarnings: 3,
     enableFullscreenMode: false,
-    disableDevTools: false,
   };
 
   const [form, setForm] = useState<FormState>({
@@ -175,7 +174,6 @@ const CreateExamPage: React.FC = () => {
           disableCopyPaste: form.securitySettings.disableCopyPaste,
           maxTabSwitchWarnings: form.securitySettings.maxTabSwitchWarnings,
           enableFullscreenMode: form.securitySettings.enableFullscreenMode,
-          disableDevTools: form.securitySettings.disableDevTools,
         },
       };
 
@@ -190,10 +188,10 @@ const CreateExamPage: React.FC = () => {
       }
 
       // Create exam in database via API
-      await api.exams.create(examData);
+      const createdExam = await api.exams.create(examData);
       
-      // Navigate to my exams page
-      router.push('/dashboard/teacher/my-exams');
+      // Navigate to exam details page
+      router.push(`/dashboard/teacher/exam/${createdExam.id}`);
     } catch (err) {
       console.error('Failed to create exam:', err);
       setError(err instanceof Error ? err.message : 'Failed to create exam. Please try again.');
@@ -208,7 +206,7 @@ const CreateExamPage: React.FC = () => {
         <div>
           <h1 className="text-3xl font-bold text-black">Create New Exam</h1>
           <p className="text-gray-600 mt-2">Set up your assessment with questions and security settings</p>
-        </div>
+        </div>~
 
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => router.back()}>
