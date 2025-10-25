@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { errorHandler, successResponse } from '@/app/lib/api/errors';
+import { errorHandler, successResponse, ApiError } from '@/app/lib/api/errors';
 import { requireStudent } from '@/app/lib/api/auth';
 import prisma from '@/app/lib/prisma';
 import { ExamStatus, AttemptStatus } from '@prisma/client';
@@ -35,11 +35,11 @@ const lowerExamStatus = (status: ExamStatus): LowercaseExamStatus =>
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: { id: string } }
 ) {
   try {
     const user = await requireStudent(request);
-    const { id } = await params;
+    const { id } = params;
 
     // Check if student is enrolled
     const enrollment = await prisma.enrollment.findUnique({
@@ -52,7 +52,7 @@ export async function GET(
     });
 
     if (!enrollment) {
-      return errorHandler({ message: 'You are not enrolled in this exam', status: 403 });
+      throw new ApiError(403, 'You are not enrolled in this exam');
     }
 
     // Get exam with questions
@@ -69,21 +69,21 @@ export async function GET(
     });
 
     if (!exam) {
-      return errorHandler({ message: 'Exam not found', status: 404 });
+      throw new ApiError(404, 'Exam not found');
     }
 
     // Check if exam is available
     const now = new Date();
     if (exam.status !== ExamStatus.PUBLISHED && exam.status !== ExamStatus.ONGOING) {
-      return errorHandler({ message: 'Exam is not available', status: 403 });
+      throw new ApiError(403, 'Exam is not available');
     }
 
     if (exam.startTime && exam.startTime > now) {
-      return errorHandler({ message: 'Exam has not started yet', status: 403 });
+      throw new ApiError(403, 'Exam has not started yet');
     }
 
     if (exam.endTime && exam.endTime < now) {
-      return errorHandler({ message: 'Exam has ended', status: 403 });
+      throw new ApiError(403, 'Exam has ended');
     }
 
     // Check attempts
@@ -96,10 +96,7 @@ export async function GET(
     });
 
     if (attempts >= exam.maxAttempts) {
-      return errorHandler({
-        message: 'You have reached the maximum number of attempts',
-        status: 403,
-      });
+      throw new ApiError(403, 'You have reached the maximum number of attempts');
     }
 
     // Check for existing in-progress attempt

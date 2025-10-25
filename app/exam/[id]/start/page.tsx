@@ -19,8 +19,6 @@ export default function StartExamPage() {
     requireWebcam?: boolean;
     enableFullscreenMode?: boolean;
     preventTabSwitching?: boolean;
-    disableCopyPaste?: boolean;
-    disableRightClick?: boolean;
     [key: string]: unknown;
   }
   interface ExamQuestion { id: string; points: number; [k: string]: unknown }
@@ -269,22 +267,11 @@ export default function StartExamPage() {
                   Switching tabs or windows is not allowed and will be flagged
                 </li>
               )}
-              {(exam?.settings?.disableCopyPaste || exam?.settings?.disableRightClick) && (
-                <li className="flex items-start">
-                  <span className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></span>
-                  {exam?.settings?.disableCopyPaste && exam?.settings?.disableRightClick 
-                    ? 'Copy/paste and right-click are disabled during the exam'
-                    : exam?.settings?.disableCopyPaste 
-                      ? 'Copy/paste is disabled during the exam'
-                      : 'Right-click is disabled during the exam'}
-                </li>
-              )}
               <li className="flex items-start">
                 <span className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></span>
                 The exam will auto-submit when time expires
               </li>
-              {!requiresFullscreen && !requiresCamera && !exam?.settings?.preventTabSwitching && 
-               !exam?.settings?.disableCopyPaste && !exam?.settings?.disableRightClick && (
+              {!requiresFullscreen && !requiresCamera && !exam?.settings?.preventTabSwitching && (
                 <li className="flex items-start">
                   <span className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></span>
                   Complete all questions to the best of your ability

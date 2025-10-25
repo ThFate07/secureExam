@@ -4,7 +4,7 @@ import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Label } from '../ui/label';
 import { Input } from '../ui/input';
-import { Shield, Eye, Lock, MousePointer, Shuffle, Clock, CheckSquare } from 'lucide-react';
+import { Shield, Eye, Lock, Shuffle, Clock, CheckSquare } from 'lucide-react';
 import { ExamSecuritySettings } from '../../lib/examStore';
 
 interface SecuritySettingsProps {
@@ -97,34 +97,6 @@ const SecuritySettings: React.FC<SecuritySettingsProps> = ({ settings, onChange 
                 onChange={(e) => updateSetting('enableFullscreenMode', e.target.checked)}
               />
               <span className="text-sm">Force fullscreen mode</span>
-            </Label>
-          </div>
-        </div>
-
-        {/* User Interactions */}
-        <div className="space-y-4">
-          <h4 className="font-medium text-sm text-gray-700 flex items-center gap-2">
-            <MousePointer className="h-4 w-4" />
-            User Interactions
-          </h4>
-          <div className="grid grid-cols-1 gap-3 pl-6">
-            <Label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={settings.disableRightClick}
-                onChange={(e) => updateSetting('disableRightClick', e.target.checked)}
-              />
-              <span className="text-sm">Disable right-click</span>
-            </Label>
-            <Label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={settings.disableCopyPaste}
-                onChange={(e) => updateSetting('disableCopyPaste', e.target.checked)}
-              />
-              <span className="text-sm">Disable copy/paste</span>
             </Label>
           </div>
         </div>

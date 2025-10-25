@@ -39,8 +39,6 @@ const CreateExamPage: React.FC = () => {
     requireWebcam: false,
     enableScreenMonitoring: false,
     lockdownBrowser: false,
-    disableRightClick: false,
-    disableCopyPaste: false,
     shuffleQuestions: false,
     shuffleOptions: false,
     showResultsImmediately: true,
@@ -170,8 +168,6 @@ const CreateExamPage: React.FC = () => {
           requireWebcam: form.securitySettings.requireWebcam,
           enableScreenMonitoring: form.securitySettings.enableScreenMonitoring,
           lockdownBrowser: form.securitySettings.lockdownBrowser,
-          disableRightClick: form.securitySettings.disableRightClick,
-          disableCopyPaste: form.securitySettings.disableCopyPaste,
           maxTabSwitchWarnings: form.securitySettings.maxTabSwitchWarnings,
           enableFullscreenMode: form.securitySettings.enableFullscreenMode,
         },
@@ -206,7 +202,7 @@ const CreateExamPage: React.FC = () => {
         <div>
           <h1 className="text-3xl font-bold text-black">Create New Exam</h1>
           <p className="text-gray-600 mt-2">Set up your assessment with questions and security settings</p>
-        </div>~
+  </div>
 
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => router.back()}>

@@ -30,6 +30,7 @@ import {
   isMonitoringConnected,
   type MonitoringEvent 
 } from "../../../lib/monitoringWebSocket";
+import { api } from "../../../lib/api/client";
 
 export default function TeacherMonitoringDashboard() {
   const { user, isAuthenticated, loading } = useAuth();
@@ -38,14 +39,9 @@ export default function TeacherMonitoringDashboard() {
   const [selectedStudent, setSelectedStudent] = useState<MonitoringData | null>(null);
   const [message, setMessage] = useState("");
   const [isConnected, setIsConnected] = useState(false);
-  const [selectedExamId] = useState<string>("default-exam-id"); // In production, get from URL or selection
 
   const handleIncomingEvent = useCallback((event: MonitoringEvent) => {
-    console.log('[Monitor] Received event:', event);
-    console.log('[Monitor] Event type:', event.type, 'from student:', event.payload?.studentId, 'exam:', event.payload?.examId);
-    
     if (!event || !event.type || !event.payload) {
-      console.error('[Monitor] Invalid event received:', event);
       return;
     }
     
@@ -55,7 +51,6 @@ export default function TeacherMonitoringDashboard() {
       const key = `${payload.examId}-${payload.studentId}`;
       let recordIndex = list.findIndex(s => s.examId === payload.examId && s.studentId === payload.studentId);
       if (recordIndex === -1) {
-        console.log('[Monitor] Creating new student record:', payload.studentId, 'exam:', payload.examId);
         list.push({
           studentId: payload.studentId,
           examId: payload.examId,
@@ -92,7 +87,8 @@ export default function TeacherMonitoringDashboard() {
           severity: p.severity,
         };
         rec.flaggedActivities = [activity, ...rec.flaggedActivities].slice(0, 50);
-        rec.warningsCount += 1;
+        // Keep warningsCount consistent with the number of recorded violations
+        rec.warningsCount = rec.flaggedActivities.length;
       }
       list[recordIndex] = rec;
       return list;
@@ -107,23 +103,30 @@ export default function TeacherMonitoringDashboard() {
 
     if (!isAuthenticated || user?.role !== 'teacher') return;
 
-    console.log('[Monitor] Initializing monitoring dashboard for exam:', selectedExamId);
-
     // Subscribe to monitoring events FIRST (before joining)
     const unsubMonitoring = subscribeMonitoringEvents(handleIncomingEvent);
 
     // Subscribe to active students list
     const unsubActiveStudents = subscribeActiveStudents((students) => {
-      console.log('[Monitor] Received active students list:', students);
       // Initialize student records from active students list
       setActiveStudents(prev => {
         const newStudents = [...prev];
         students.forEach(s => {
-          const exists = newStudents.find(existing => 
+          const idx = newStudents.findIndex(existing => 
             existing.studentId === s.studentId && existing.examId === s.examId
           );
+          const exists = idx !== -1 ? newStudents[idx] : undefined;
           if (!exists) {
-            console.log('[Monitor] Adding student from active list:', s.studentId);
+            // If server provides prior violations, hydrate flaggedActivities and warningsCount
+            const serverViolations = Array.isArray(s.violations) ? s.violations : [];
+            const hydratedActivities: FlaggedActivity[] = serverViolations.map(v => ({
+              id: `${s.examId}-${s.studentId}-${v.timestamp}`,
+              type: inferActivityType(v.description),
+              timestamp: new Date(v.timestamp),
+              description: v.description,
+              severity: v.severity,
+            }));
+
             newStudents.push({
               studentId: s.studentId,
               examId: s.examId,
@@ -132,9 +135,80 @@ export default function TeacherMonitoringDashboard() {
               lastActivity: new Date(s.lastActivity),
               webcamEnabled: false,
               currentQuestion: 1,
-              flaggedActivities: [],
-              warningsCount: 0,
+              flaggedActivities: hydratedActivities,
+              warningsCount: hydratedActivities.length,
             });
+
+            // Fallback: if server didn't include violations, fetch from API to hydrate
+            if (hydratedActivities.length === 0) {
+              (async () => {
+                try {
+                  const res = await fetch(`/api/monitor/events?examId=${s.examId}&studentId=${s.studentId}`);
+                  const data = await res.json();
+                  if (data?.success && Array.isArray(data.data?.events)) {
+                    const events = data.data.events as Array<{ description: string; timestamp: string; severity: 'LOW'|'MEDIUM'|'HIGH'|'CRITICAL' }>;
+                    const acts: FlaggedActivity[] = events.slice(0, 50).map(e => ({
+                      id: `${s.examId}-${s.studentId}-${e.timestamp}`,
+                      type: inferActivityType(e.description),
+                      timestamp: new Date(e.timestamp),
+                      description: e.description,
+                      severity: e.severity.toLowerCase() as 'low'|'medium'|'high',
+                    }));
+                    if (acts.length > 0) {
+                      setActiveStudents(cur => cur.map(stu =>
+                        stu.studentId === s.studentId && stu.examId === s.examId
+                          ? { ...stu, flaggedActivities: acts, warningsCount: acts.length }
+                          : stu
+                      ));
+                    }
+                  }
+                } catch {
+                  // best-effort only
+                }
+              })();
+            }
+          }
+          else {
+            // Merge in server-provided violations if present
+            const serverViolations = Array.isArray(s.violations) ? s.violations : [];
+            if (serverViolations.length > 0) {
+              const hydratedActivities: FlaggedActivity[] = serverViolations.map(v => ({
+                id: `${s.examId}-${s.studentId}-${v.timestamp}`,
+                type: inferActivityType(v.description),
+                timestamp: new Date(v.timestamp),
+                description: v.description,
+                severity: v.severity,
+              }));
+              const merged = { ...exists, flaggedActivities: hydratedActivities, warningsCount: hydratedActivities.length };
+              newStudents[idx] = merged;
+            } else {
+              // Server didn't include any; try REST fallback to hydrate existing record
+              (async () => {
+                try {
+                  const res = await fetch(`/api/monitor/events?examId=${s.examId}&studentId=${s.studentId}`);
+                  const data = await res.json();
+                  if (data?.success && Array.isArray(data.data?.events)) {
+                    const events = data.data.events as Array<{ description: string; timestamp: string; severity: 'LOW'|'MEDIUM'|'HIGH'|'CRITICAL' }>;
+                    const acts: FlaggedActivity[] = events.slice(0, 50).map(e => ({
+                      id: `${s.examId}-${s.studentId}-${e.timestamp}`,
+                      type: inferActivityType(e.description),
+                      timestamp: new Date(e.timestamp),
+                      description: e.description,
+                      severity: e.severity.toLowerCase() as 'low'|'medium'|'high',
+                    }));
+                    if (acts.length > 0) {
+                      setActiveStudents(cur => cur.map(stu =>
+                        stu.studentId === s.studentId && stu.examId === s.examId
+                          ? { ...stu, flaggedActivities: acts, warningsCount: acts.length }
+                          : stu
+                      ));
+                    }
+                  }
+                } catch {
+                  // best-effort only
+                }
+              })();
+            }
           }
         });
         return newStudents;
@@ -142,27 +216,25 @@ export default function TeacherMonitoringDashboard() {
     });
 
     // Subscribe to student join events
-    const unsubJoined = subscribeStudentJoined((event) => {
-      console.log('[Monitor] Student joined:', event.studentId);
+    const unsubJoined = subscribeStudentJoined(() => {
       // Student will send heartbeat immediately, so we don't need to create entry here
     });
 
     // Subscribe to student leave events
     const unsubLeft = subscribeStudentLeft((event) => {
-      console.log('[Monitor] Student left:', event.studentId);
-      setActiveStudents(prev => prev.filter(s => s.studentId !== event.studentId));
+      // Remove only the specific student's record for the exam they left
+      setActiveStudents(prev => prev.filter(s => !(s.studentId === event.studentId && s.examId === event.examId)));
     });
 
     // Subscribe to student inactive events
     const unsubInactive = subscribeStudentInactive((event) => {
-      console.log('[Monitor] Student inactive:', event.studentId);
       setActiveStudents(prev => prev.map(s => 
-        s.studentId === event.studentId ? { ...s, isActive: false } : s
+        s.studentId === event.studentId && s.examId === event.examId ? { ...s, isActive: false } : s
       ));
     });
 
     // THEN join exam monitoring as teacher via WebSocket (after all subscriptions are set up)
-    joinExamAsTeacher(selectedExamId);
+    joinExamAsTeacher();
 
     // Update connection status
     const checkConnection = setInterval(() => {
@@ -170,7 +242,6 @@ export default function TeacherMonitoringDashboard() {
     }, 1000);
 
     return () => {
-      console.log('[Monitor] Cleaning up monitoring dashboard');
       clearInterval(checkConnection);
       unsubMonitoring();
       unsubActiveStudents();
@@ -179,7 +250,7 @@ export default function TeacherMonitoringDashboard() {
       unsubInactive();
       disconnectMonitoring();
     };
-  }, [user, isAuthenticated, loading, router, handleIncomingEvent, selectedExamId]);
+  }, [user, isAuthenticated, loading, router, handleIncomingEvent]);
 
 
   const inferActivityType = (desc: string): FlaggedActivity['type'] => {
@@ -191,6 +262,7 @@ export default function TeacherMonitoringDashboard() {
   };
 
   const [studentNames, setStudentNames] = useState<Record<string, string>>({});
+  const [examTotals, setExamTotals] = useState<Record<string, number>>({});
 
   // Fetch student names when needed
   useEffect(() => {
@@ -207,6 +279,44 @@ export default function TeacherMonitoringDashboard() {
       setStudentNames(newNames);
     }
   }, [activeStudents, studentNames]);
+
+  // Fetch total questions per exam when needed
+  useEffect(() => {
+    const uniqueExamIds = [...new Set(activeStudents.map(s => s.examId))];
+    const missingExamIds = uniqueExamIds.filter(id => examTotals[id] === undefined);
+
+    if (missingExamIds.length === 0) return;
+
+    // Fetch totals in parallel and merge
+    (async () => {
+      try {
+        const results = await Promise.allSettled(
+          missingExamIds.map(async (examId) => {
+            const exam = await api.exams.get(examId);
+            // examQuestions comes from API include; fallback to questions if shape differs
+            const total = Array.isArray(exam?.examQuestions)
+              ? exam.examQuestions.length
+              : Array.isArray(exam?.questions)
+                ? exam.questions.length
+                : 0;
+            return { examId, total };
+          })
+        );
+
+        const next: Record<string, number> = {};
+        for (const r of results) {
+          if (r.status === 'fulfilled') {
+            next[r.value.examId] = r.value.total;
+          }
+        }
+        if (Object.keys(next).length > 0) {
+          setExamTotals(prev => ({ ...prev, ...next }));
+        }
+      } catch (err) {
+        console.error('Failed to load exam totals', err);
+      }
+    })();
+  }, [activeStudents, examTotals]);
 
   const getStudentName = (studentId: string) => {
     return studentNames[studentId] || `Student ${studentId.slice(0, 8)}`;
@@ -234,9 +344,11 @@ export default function TeacherMonitoringDashboard() {
   const sendMessage = (studentId: string) => {
     if (!message.trim()) return;
     
+    // Get the examId from the selected student
+    if (!selectedStudent) return;
+    
     // Send message via WebSocket
-    sendMessageToStudent(studentId, selectedExamId, message);
-    console.log(`Sending message to ${studentId}: ${message}`);
+    sendMessageToStudent(studentId, selectedStudent.examId, message);
     setMessage("");
     alert(`Message sent to ${getStudentName(studentId)}`);
   };
@@ -367,7 +479,7 @@ export default function TeacherMonitoringDashboard() {
                 )}
                 {activeStudents.map((student) => (
                   <div
-                    key={student.studentId}
+                    key={student.attemptId}
                     className={`border rounded-lg p-4 cursor-pointer transition-colors ${
                       selectedStudent?.studentId === student.studentId
                         ? "bg-blue-50 border-blue-300"
@@ -430,7 +542,12 @@ export default function TeacherMonitoringDashboard() {
                     
                     <div>
                       <label className="font-medium text-gray-500">Question</label>
-                      <div>{selectedStudent.currentQuestion}/5</div>
+                      <div>
+                        {selectedStudent.currentQuestion}
+                        {examTotals[selectedStudent.examId] !== undefined && (
+                          <>/{examTotals[selectedStudent.examId]}</>
+                        )}
+                      </div>
                     </div>
                     
                     <div>

@@ -49,9 +49,14 @@ interface SendMessagePayload {
 	message: string;
 }
 
-// Track active students per exam
-// Map<examId, Map<studentId, { lastActivity: number }>>
-const activeStudents = new Map<string, Map<string, { lastActivity: number }>>();
+interface LeaveExamPayload {
+	studentId: string;
+	examId: string;
+}
+
+// Track active students per exam with recent violations history (in-memory)
+// Map<examId, Map<studentId, { lastActivity: number; violations: Array<{ description: string; severity: 'low' | 'medium' | 'high'; timestamp: number }> }>>
+const activeStudents = new Map<string, Map<string, { lastActivity: number; violations: Array<{ description: string; severity: 'low' | 'medium' | 'high'; timestamp: number }> }>>();
 
 // Track socket meta to handle disconnects
 type SocketMeta = {
@@ -68,12 +73,13 @@ function getActiveStudents(examId?: string) {
 			studentId,
 			examId,
 			lastActivity: v.lastActivity,
+			violations: v.violations,
 		}));
 	}
-	const out: Array<{ studentId: string; examId: string; lastActivity: number }> = [];
+	const out: Array<{ studentId: string; examId: string; lastActivity: number; violations: Array<{ description: string; severity: 'low' | 'medium' | 'high'; timestamp: number }> }> = [];
 	for (const [exId, map] of activeStudents.entries()) {
 		for (const [studentId, v] of map.entries()) {
-			out.push({ studentId, examId: exId, lastActivity: v.lastActivity });
+			out.push({ studentId, examId: exId, lastActivity: v.lastActivity, violations: v.violations });
 		}
 	}
 	return out;
@@ -86,7 +92,13 @@ function touchStudent(examId: string, studentId: string, ts: number) {
 		m = new Map();
 		activeStudents.set(examId, m);
 	}
-	m.set(studentId, { lastActivity: ts });
+	const existing = m.get(studentId);
+	if (existing) {
+		existing.lastActivity = ts;
+		m.set(studentId, existing);
+	} else {
+		m.set(studentId, { lastActivity: ts, violations: [] });
+	}
 }
 
 // Helper: remove student
@@ -132,10 +144,9 @@ app.prepare().then(() => {
 
 	io.on('connection', (socket: Socket) => {
 		const meta: SocketMeta = {};
-		console.log('[Server] New WebSocket connection, socket.id:', socket.id);
+		console.log('[Server] New WebSocket connection:', socket.id);
 
 		socket.on('join-exam', (payload: JoinExamPayload) => {
-			console.log('[Server] join-exam event received:', payload);
 			meta.role = payload.role;
 			meta.examId = payload.examId;
 			meta.studentId = payload.studentId;
@@ -143,42 +154,36 @@ app.prepare().then(() => {
 			if (payload.role === 'teacher') {
 				// All teachers join a common room to receive all events
 				socket.join('teachers');
-				console.log('[Server] Teacher joined "teachers" room');
 				// Also optionally join a specific exam room if provided
 				if (payload.examId) {
 					socket.join(`exam:${payload.examId}`);
-					console.log(`[Server] Teacher joined exam:${payload.examId} room`);
 				}
 
 				// Send current active students (for the specific exam if provided, otherwise all)
 				const list = getActiveStudents(payload.examId);
-				console.log('[Server] Sending active students list to teacher:', list.length, 'students');
 				socket.emit('active-students', list);
 			} else if (payload.role === 'student' && payload.examId && payload.studentId) {
 				// Student joins their exam room and a personal room for direct messages
 				socket.join(`exam:${payload.examId}`);
 				socket.join(`student:${payload.examId}:${payload.studentId}`);
-				console.log(`[Server] Student ${payload.studentId} joined exam:${payload.examId}`);
 
 				// Mark active and notify teachers
 				const now = Date.now();
 				touchStudent(payload.examId, payload.studentId, now);
+
 				io.to('teachers').emit('student-joined', {
 					studentId: payload.studentId,
 					examId: payload.examId,
 					timestamp: now,
 				});
-				console.log(`[Server] Notified teachers: student ${payload.studentId} joined exam ${payload.examId}`);
 
-				// Optionally, send an immediate heartbeat to teachers via active list update
-				const updatedList = getActiveStudents(payload.examId);
+				// Send updated active students list to ALL teachers
+				const updatedList = getActiveStudents();
 				io.to('teachers').emit('active-students', updatedList);
-				console.log(`[Server] Sent updated active students list (${updatedList.length} students) to teachers`);
 			}
 		});
 
 		socket.on('monitoring-event', (event: MonitoringEvent) => {
-			console.log('[Server] Received monitoring-event:', event.type, 'from student:', event.payload?.studentId);
 			// Forward events to teachers (global room) and the specific exam room
 			io.to('teachers').emit('monitoring-event', event);
 			if (event?.payload?.examId) io.to(`exam:${event.payload.examId}`).emit('monitoring-event', event);
@@ -186,12 +191,43 @@ app.prepare().then(() => {
 			// Update presence timestamp for student-originated events
 			const p = event?.payload as BaseMonitoringPayload | undefined;
 			if (p?.examId && p?.studentId && p?.timestamp) {
+				// Ensure student is present and update timestamp
 				touchStudent(p.examId, p.studentId, p.timestamp);
+
+				// If it's a violation, append to in-memory history
+				if (event.type === 'violation') {
+					const m = activeStudents.get(p.examId);
+					if (m) {
+						const rec = m.get(p.studentId);
+						if (rec) {
+							const v = event.payload as ViolationPayload;
+							rec.violations = [{ description: v.description, severity: v.severity, timestamp: v.timestamp }, ...rec.violations].slice(0, 50);
+							m.set(p.studentId, rec);
+						}
+					}
+
+					// DB persistence is handled by REST API calls from the client to avoid duplicates
+				}
+			}
+		});
+
+		// Explicit leave from student (e.g., navigating away)
+		socket.on('leave-exam', (payload: LeaveExamPayload) => {
+			if (!payload?.examId || !payload?.studentId) return;
+			const removed = removeStudent(payload.examId, payload.studentId);
+			if (removed) {
+				io.to('teachers').emit('student-left', {
+					studentId: payload.studentId,
+					examId: payload.examId,
+					timestamp: Date.now(),
+				});
+				// Send updated active students list to ALL teachers
+				const updatedList = getActiveStudents();
+				io.to('teachers').emit('active-students', updatedList);
 			}
 		});
 
 		socket.on('send-message', (msg: SendMessagePayload) => {
-			console.log(`[Server] Teacher sending message to student ${msg.studentId} in exam ${msg.examId}`);
 			// Allow teachers to send messages to a specific student
 			io.to(`student:${msg.examId}:${msg.studentId}`).emit('teacher-message', {
 				message: msg.message,
@@ -200,17 +236,19 @@ app.prepare().then(() => {
 		});
 
 		socket.on('disconnect', () => {
-			console.log('[Server] Socket disconnected:', socket.id, 'role:', meta.role, 'studentId:', meta.studentId);
+			console.log('[Server] Socket disconnected:', socket.id);
 			// If a student disconnects, mark them as left
 			if (meta.role === 'student' && meta.examId && meta.studentId) {
 				const removed = removeStudent(meta.examId, meta.studentId);
 				if (removed) {
-					console.log(`[Server] Student ${meta.studentId} left exam ${meta.examId}`);
 					io.to('teachers').emit('student-left', {
 						studentId: meta.studentId,
 						examId: meta.examId,
 						timestamp: Date.now(),
 					});
+					// Broadcast refreshed active students after disconnect
+					const updatedList = getActiveStudents();
+					io.to('teachers').emit('active-students', updatedList);
 				}
 			}
 		});

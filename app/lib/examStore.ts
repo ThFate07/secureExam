@@ -18,8 +18,6 @@ export interface ExamSecuritySettings {
   requireWebcam: boolean;
   enableScreenMonitoring: boolean;
   lockdownBrowser: boolean; // Includes: dev tools blocking, copy/paste prevention, right-click disable, Alt+Tab block, print prevention
-  disableRightClick: boolean;
-  disableCopyPaste: boolean;
   shuffleQuestions: boolean;
   shuffleOptions: boolean;
   showResultsImmediately: boolean;
@@ -108,8 +106,6 @@ export function createExam(partial: Partial<StoredExam>): StoredExam {
     requireWebcam: false,
     enableScreenMonitoring: false,
     lockdownBrowser: false,
-    disableRightClick: false,
-    disableCopyPaste: false,
     shuffleQuestions: false,
     shuffleOptions: false,
     showResultsImmediately: true,

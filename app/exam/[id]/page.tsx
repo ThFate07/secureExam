@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "../../hooks/useAuth";
 import { useExamTimer, useAntiCheat, useWebcam, useExamSession } from "../../hooks/useExam";
 // Use WebSocket-based monitoring for cross-device real-time updates
 import { 
   sendMonitoringEvent as sendWSMonitoringEvent,
-  joinExamAsStudent
+  joinExamAsStudent,
+  leaveExamAsStudent,
+  subscribeTeacherMessages
 } from "../../lib/monitoringWebSocket";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
@@ -30,7 +32,9 @@ export default function ExamInterface() {
   const { user, isAuthenticated, loading } = useAuth();
   
   const [exam, setExam] = useState<Exam | null>(null);
+  const [attemptId, setAttemptId] = useState<string | null>(null);
   const [violations, setViolations] = useState<string[]>([]);
+  const [teacherMessages, setTeacherMessages] = useState<Array<{ message: string; timestamp: number }>>([]);
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
 
   // Fetch exam data from API
@@ -45,13 +49,15 @@ export default function ExamInterface() {
         .then(res => res.json())
         .then(data => {
           if (data.success) {
+            const { exam: examData, attemptId: startAttemptId } = data.data;
             const fetchedExam: Exam = {
-              ...data.data.exam,
+              ...examData,
               startTime: data.data.exam.startTime ? new Date(data.data.exam.startTime) : new Date(),
               endTime: data.data.exam.endTime ? new Date(data.data.exam.endTime) : new Date(Date.now() + data.data.exam.duration * 60 * 1000),
               createdAt: new Date(data.data.exam.createdAt),
             };
             setExam(fetchedExam);
+            setAttemptId(startAttemptId as string);
           } else {
             console.error('Failed to fetch exam:', data.error);
             alert(data.error?.message || 'Failed to load exam');
@@ -85,11 +91,50 @@ export default function ExamInterface() {
             timestamp: Date.now(),
         },
       });
+
+      // Persist to API so violations survive reloads and teacher view keeps history
+      const mapToEventType = (text: string):
+        | 'TAB_SWITCH'
+        | 'WINDOW_BLUR'
+        | 'COPY_PASTE'
+        | 'RIGHT_CLICK'
+        | 'FULLSCREEN_EXIT'
+        | 'WEBCAM_DISABLED'
+        | 'SUSPICIOUS_BEHAVIOR' => {
+        const t = text.toLowerCase();
+        if (t.includes('tab')) return 'TAB_SWITCH';
+        if (t.includes('blur') || t.includes('focus')) return 'WINDOW_BLUR';
+        if (t.includes('copy') || t.includes('paste') || t.includes('cut')) return 'COPY_PASTE';
+        if (t.includes('right-click') || t.includes('right click')) return 'RIGHT_CLICK';
+        if (t.includes('fullscreen')) return 'FULLSCREEN_EXIT';
+        if (t.includes('webcam')) return 'WEBCAM_DISABLED';
+        return 'SUSPICIOUS_BEHAVIOR';
+      };
+
+      const sevApi = sev === 'high' ? 'HIGH' : sev === 'medium' ? 'MEDIUM' : 'LOW';
+      try {
+        fetch('/api/monitor/events?noCache=' + Date.now(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            examId: exam.id,
+            attemptId: attemptId || undefined,
+            type: mapToEventType(violation),
+            severity: sevApi,
+            description: violation,
+          }),
+        }).catch(() => {/* ignore */});
+      } catch {/* ignore */}
     }
   };
 
   const handleSubmitExam = async (answers: Map<string, string | number>) => {
     if (!exam) return;
+    if (!attemptId) {
+      console.error('No attemptId available for submission');
+      alert('Unable to submit: attempt not initialized. Please refresh and try again.');
+      return;
+    }
 
     try {
       // Convert Map to array for API
@@ -98,7 +143,7 @@ export default function ExamInterface() {
         answer,
       }));
 
-      const response = await fetch(`/api/attempts/${id}/submit`, {
+      const response = await fetch(`/api/attempts/${attemptId}/submit`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -126,8 +171,15 @@ export default function ExamInterface() {
   };
 
   // Initialize hooks
+  const endTimeMs = exam?.endTime.getTime();
+  const remainingSeconds = useMemo(() => {
+    return endTimeMs
+      ? Math.max(0, Math.floor((endTimeMs - Date.now()) / 1000))
+      : 0;
+  }, [endTimeMs]);
+
   const timer = useExamTimer({
-    initialTime: exam ? exam.duration * 60 : 0,
+    initialTime: remainingSeconds,
     onTimeUp: handleTimeUp,
     isActive: !!exam,
   });
@@ -205,6 +257,27 @@ export default function ExamInterface() {
     });
   }, [webcam.isActive, exam, user]);
 
+  // Restore persisted violations history for this attempt on reload
+  useEffect(() => {
+    if (!exam || !user) return;
+    // Only fetch after attempt is initialized
+    if (!attemptId) return;
+    (async () => {
+      try {
+        const res = await fetch(`/api/monitor/events?examId=${exam.id}&attemptId=${attemptId}`);
+        const data = await res.json();
+        if (data?.success && Array.isArray(data.data?.events)) {
+          const items: string[] = data.data.events
+            .slice(0, 50)
+            .map((e: { timestamp: string; description: string }) => `${new Date(e.timestamp).toLocaleTimeString()}: ${e.description}`);
+          setViolations(items.reverse());
+        }
+      } catch {
+        // best-effort only
+      }
+    })();
+  }, [exam, user, attemptId]);
+
   // Join the monitoring room as a student once exam and user are available
   useEffect(() => {
     if (!exam || !user) return;
@@ -213,7 +286,34 @@ export default function ExamInterface() {
     
     return () => {
       console.log('[Exam] Student leaving exam page');
+      try {
+        leaveExamAsStudent(user.id, exam.id);
+      } catch {
+        // noop
+      }
     };
+  }, [exam, user]);
+
+  // Listen for messages from teacher targeted to this student
+  useEffect(() => {
+    if (!exam || !user) return;
+    const unsubscribe = subscribeTeacherMessages((evt) => {
+      // Prepend newest message
+      setTeacherMessages((prev) => [{ message: evt.message, timestamp: evt.timestamp }, ...prev].slice(0, 20));
+    });
+    return () => unsubscribe();
+  }, [exam, user]);
+
+  // Best-effort: notify server on page unload/refresh
+  useEffect(() => {
+    if (!exam || !user) return;
+    const handler = () => {
+      try {
+        leaveExamAsStudent(user.id, exam.id);
+      } catch {}
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
   }, [exam, user]);
 
   if (loading) {
@@ -439,6 +539,28 @@ export default function ExamInterface() {
                       <AlertDescription className="text-xs">{webcam.error}</AlertDescription>
                     </Alert>
                   )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Teacher Messages */}
+            {teacherMessages.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center space-x-2">
+                    <Shield className="h-5 w-5" />
+                    <span>Teacher Messages</span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2 max-h-40 overflow-y-auto text-sm">
+                    {teacherMessages.slice(0, 5).map((m, idx) => (
+                      <div key={idx} className="p-2 rounded border bg-blue-50 text-blue-900">
+                        <div className="font-medium">{new Date(m.timestamp).toLocaleTimeString()}</div>
+                        <div>{m.message}</div>
+                      </div>
+                    ))}
+                  </div>
                 </CardContent>
               </Card>
             )}

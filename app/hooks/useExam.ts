@@ -14,6 +14,15 @@ export function useExamTimer({ initialTime, onTimeUp, isActive = true }: UseExam
   const [timeRemaining, setTimeRemaining] = useState(initialTime);
   const [isRunning, setIsRunning] = useState(isActive);
 
+  // Sync internal state when props change (e.g., when exam loads asynchronously)
+  useEffect(() => {
+    setTimeRemaining(initialTime);
+  }, [initialTime]);
+
+  useEffect(() => {
+    setIsRunning(isActive);
+  }, [isActive]);
+
   useEffect(() => {
     if (!isRunning || timeRemaining <= 0) return;
 

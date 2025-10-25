@@ -56,7 +56,9 @@ let socket: Socket | null = null;
 
 // Initialize WebSocket connection
 export function initializeMonitoringSocket(): Socket {
-  if (socket && socket.connected) {
+  // Always return existing socket if it exists (even if not connected yet)
+  // This prevents creating multiple socket instances
+  if (socket) {
     return socket;
   }
 
@@ -70,7 +72,7 @@ export function initializeMonitoringSocket(): Socket {
   });
 
   socket.on('connect', () => {
-    console.log('[WebSocket] Connected to monitoring server, socket.id:', socket?.id);
+    console.log('[WebSocket] Connected to monitoring server');
   });
 
   socket.on('disconnect', () => {
@@ -79,11 +81,6 @@ export function initializeMonitoringSocket(): Socket {
 
   socket.on('connect_error', (error) => {
     console.error('[WebSocket] Connection error:', error);
-  });
-
-  // Test listener for ANY event
-  socket.onAny((eventName, ...args) => {
-    console.log(`[WebSocket] Received event: ${eventName}`, args);
   });
 
   return socket;
@@ -99,7 +96,6 @@ export function joinExamAsStudent(studentId: string, examId: string) {
   const sock = initializeMonitoringSocket();
   
   const doJoin = () => {
-    console.log(`[WebSocket] Student ${studentId} joining exam ${examId}, socket connected: ${sock.connected}`);
     sock.emit('join-exam', { studentId, examId, role: 'student' });
   };
 
@@ -108,17 +104,30 @@ export function joinExamAsStudent(studentId: string, examId: string) {
     doJoin();
   } else {
     // Wait for connection before joining
-    console.log('[WebSocket] Waiting for connection before joining...');
     sock.once('connect', doJoin);
   }
 }
 
+// Student leaves exam monitoring
+export function leaveExamAsStudent(studentId: string, examId: string) {
+  const sock = getMonitoringSocket();
+  if (!sock) return;
+  const doLeave = () => {
+    sock.emit('leave-exam', { studentId, examId });
+  };
+  if (sock.connected) {
+    doLeave();
+  } else {
+    // If reconnect happens before unload, still send
+    sock.once('connect', doLeave);
+  }
+}
+
 // Teacher joins exam monitoring
-export function joinExamAsTeacher(examId: string) {
+export function joinExamAsTeacher(examId?: string) {
   const sock = initializeMonitoringSocket();
   
   const doJoin = () => {
-    console.log(`[WebSocket] Teacher joining monitoring for exam ${examId}, socket connected:`, sock.connected);
     sock.emit('join-exam', { examId, role: 'teacher' });
   };
 
@@ -127,7 +136,6 @@ export function joinExamAsTeacher(examId: string) {
     doJoin();
   } else {
     // Wait for connection before joining
-    console.log('[WebSocket] Waiting for connection before joining...');
     sock.once('connect', doJoin);
   }
 }
@@ -136,30 +144,23 @@ export function joinExamAsTeacher(examId: string) {
 export function sendMonitoringEvent(event: MonitoringEvent) {
   const sock = getMonitoringSocket();
   if (!sock) {
-    console.warn('[WebSocket] Socket not initialized, initializing now...');
     const newSock = initializeMonitoringSocket();
     if (!newSock.connected) {
-      console.warn('[WebSocket] Socket not connected yet, queuing event:', event.type);
       // Queue the event to be sent when connected
       newSock.once('connect', () => {
-        console.log('[WebSocket] Now connected, sending queued event:', event.type);
         newSock.emit('monitoring-event', event);
       });
       return;
     }
     newSock.emit('monitoring-event', event);
-    console.log('[WebSocket] Sent event:', event.type, 'from newly initialized socket');
     return;
   }
   
   if (!sock.connected) {
-    console.warn('[WebSocket] Socket not connected, event not sent:', event.type);
-    console.warn('[WebSocket] Socket state - connected:', sock.connected, 'id:', sock.id);
     return;
   }
 
   sock.emit('monitoring-event', event);
-  console.log('[WebSocket] Sent event:', event.type, 'studentId:', event.payload?.studentId);
 }
 
 // Subscribe to monitoring events (for teacher)
@@ -169,22 +170,12 @@ export function subscribeMonitoringEvents(
   const sock = initializeMonitoringSocket();
 
   const handler = (event: MonitoringEvent) => {
-    console.log('[WebSocket Client] Received monitoring-event:', event);
-    console.log('[WebSocket Client] Event type:', event?.type, 'payload:', event?.payload);
-    console.log('[WebSocket Client] Calling onEvent handler...');
-    try {
-      onEvent(event);
-      console.log('[WebSocket Client] onEvent handler completed successfully');
-    } catch (error) {
-      console.error('[WebSocket Client] Error in onEvent handler:', error);
-    }
+    onEvent(event);
   };
 
   sock.on('monitoring-event', handler);
-  console.log('[WebSocket Client] Subscribed to monitoring-event');
 
   return () => {
-    console.log('[WebSocket Client] Unsubscribed from monitoring-event');
     sock.off('monitoring-event', handler);
   };
 }
@@ -230,26 +221,27 @@ export function subscribeStudentInactive(
 
 // Subscribe to active students list (for teacher)
 export function subscribeActiveStudents(
-  onActiveStudents: (students: Array<{ studentId: string; examId: string; lastActivity: number }>) => void
+  onActiveStudents: (students: Array<{
+    studentId: string;
+    examId: string;
+    lastActivity: number;
+    violations?: Array<{ description: string; severity: 'low' | 'medium' | 'high'; timestamp: number }>;
+  }>) => void
 ): () => void {
   const sock = initializeMonitoringSocket();
 
-  const handler = (students: Array<{ studentId: string; examId: string; lastActivity: number }>) => {
-    console.log('[WebSocket Client] Received active-students:', students);
-    console.log('[WebSocket Client] Number of active students:', students?.length);
-    try {
-      onActiveStudents(students);
-      console.log('[WebSocket Client] active-students handler completed successfully');
-    } catch (error) {
-      console.error('[WebSocket Client] Error in active-students handler:', error);
-    }
+  const handler = (students: Array<{
+    studentId: string;
+    examId: string;
+    lastActivity: number;
+    violations?: Array<{ description: string; severity: 'low' | 'medium' | 'high'; timestamp: number }>;
+  }>) => {
+    onActiveStudents(students);
   };
 
   sock.on('active-students', handler);
-  console.log('[WebSocket Client] Subscribed to active-students');
 
   return () => {
-    console.log('[WebSocket Client] Unsubscribed from active-students');
     sock.off('active-students', handler);
   };
 }
@@ -271,7 +263,6 @@ export function subscribeTeacherMessages(
 export function sendMessageToStudent(studentId: string, examId: string, message: string) {
   const sock = getMonitoringSocket();
   if (!sock || !sock.connected) {
-    console.warn('[WebSocket] Socket not connected, message not sent');
     return;
   }
 
@@ -283,7 +274,6 @@ export function disconnectMonitoring() {
   if (socket) {
     socket.disconnect();
     socket = null;
-    console.log('[WebSocket] Disconnected from monitoring');
   }
 }
 

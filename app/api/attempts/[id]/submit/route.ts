@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { errorHandler, successResponse } from '@/app/lib/api/errors';
+import { errorHandler, successResponse, ApiError } from '@/app/lib/api/errors';
 import { requireStudent } from '@/app/lib/api/auth';
 import prisma from '@/app/lib/prisma';
 import { AttemptStatus } from '@prisma/client';
@@ -11,11 +11,11 @@ interface AnswerSubmission {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: { id: string } }
 ) {
   try {
     const user = await requireStudent(request);
-    const { id: attemptId } = await params;
+    const { id: attemptId } = params;
     const body = await request.json();
     const { answers } = body as { answers: AnswerSubmission[] };
 
@@ -36,15 +36,15 @@ export async function POST(
     });
 
     if (!attempt) {
-      return errorHandler({ message: 'Attempt not found', status: 404 });
+      throw new ApiError(404, 'Attempt not found');
     }
 
     if (attempt.studentId !== user.id) {
-      return errorHandler({ message: 'Unauthorized', status: 403 });
+      throw new ApiError(403, 'Unauthorized');
     }
 
     if (attempt.status !== AttemptStatus.IN_PROGRESS) {
-      return errorHandler({ message: 'Attempt is not in progress', status: 400 });
+      throw new ApiError(400, 'Attempt is not in progress');
     }
 
     // Calculate score
