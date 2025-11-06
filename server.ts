@@ -49,6 +49,12 @@ interface SendMessagePayload {
 	message: string;
 }
 
+interface TerminateExamPayload {
+	studentId: string;
+	examId: string;
+	reason: string;
+}
+
 interface LeaveExamPayload {
 	studentId: string;
 	examId: string;
@@ -233,6 +239,34 @@ app.prepare().then(() => {
 				message: msg.message,
 				timestamp: Date.now(),
 			});
+		});
+
+		socket.on('terminate-exam', (payload: TerminateExamPayload) => {
+			// Allow teachers to terminate a specific student's exam
+			if (!payload?.examId || !payload?.studentId) return;
+			
+			// Remove student from active list immediately
+			const removed = removeStudent(payload.examId, payload.studentId);
+			
+			// Send termination event to the specific student
+			io.to(`student:${payload.examId}:${payload.studentId}`).emit('exam-terminated', {
+				examId: payload.examId,
+				studentId: payload.studentId,
+				terminatedBy: 'teacher', // Could enhance to include teacher name
+				reason: payload.reason,
+				timestamp: Date.now(),
+			});
+
+			// Notify all teachers that student was terminated
+			io.to('teachers').emit('student-left', {
+				studentId: payload.studentId,
+				examId: payload.examId,
+				timestamp: Date.now(),
+			});
+
+			// Send updated active students list to all teachers
+			const updatedList = getActiveStudents();
+			io.to('teachers').emit('active-students', updatedList);
 		});
 
 		socket.on('disconnect', () => {

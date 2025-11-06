@@ -8,9 +8,12 @@ import { rateLimit } from '@/app/lib/api/rateLimit';
 // POST /api/monitor/events - Create monitoring event
 export async function POST(request: NextRequest) {
   try {
-    await rateLimit(request, { maxRequests: 100, windowMs: 60000 });
-    
+    // Authenticate first so we can rate-limit per-user (avoids grouping all requests as 'unknown' IP)
     const user = await requireAuth(request);
+
+    // Use user id as key prefix to avoid global "unknown" key when running locally
+    await rateLimit(request, { maxRequests: 100, windowMs: 60000, keyPrefix: `monitor:${user.id}` });
+
     const data = await validateRequest(request, monitoringEventSchema);
 
     // Create monitoring event

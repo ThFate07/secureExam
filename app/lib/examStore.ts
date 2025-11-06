@@ -16,7 +16,6 @@ export interface StoredQuestion {
 export interface ExamSecuritySettings {
   preventTabSwitching: boolean;
   requireWebcam: boolean;
-  enableScreenMonitoring: boolean;
   lockdownBrowser: boolean; // Includes: dev tools blocking, copy/paste prevention, right-click disable, Alt+Tab block, print prevention
   shuffleQuestions: boolean;
   shuffleOptions: boolean;
@@ -105,7 +104,6 @@ export function createExam(partial: Partial<StoredExam>): StoredExam {
   const defaultSecuritySettings: ExamSecuritySettings = {
     preventTabSwitching: false,
     requireWebcam: false,
-    enableScreenMonitoring: false,
     lockdownBrowser: false,
     shuffleQuestions: false,
     shuffleOptions: false,

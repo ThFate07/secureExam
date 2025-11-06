@@ -51,7 +51,6 @@ export const createExamSchema = z.object({
     allowReview: z.boolean().default(true),
     preventTabSwitching: z.boolean().default(true),
     requireWebcam: z.boolean().default(true),
-    enableScreenMonitoring: z.boolean().default(true),
     lockdownBrowser: z.boolean().default(false),
     maxTabSwitchWarnings: z.number().min(1).max(10).default(3),
     enableFullscreenMode: z.boolean().default(false),
@@ -59,6 +58,15 @@ export const createExamSchema = z.object({
     maxIntentionalViolations: z.number().min(1).max(20).default(3),
   }),
 });
+
+// Ensure we don't allow both webcam requirement and forced fullscreen together
+export const createExamSchemaWithChecks = createExamSchema.refine(
+  (val) => !(val.settings.requireWebcam && val.settings.enableFullscreenMode),
+  {
+    message: 'Cannot enable both webcam requirement and fullscreen mode at the same time',
+    path: ['settings'],
+  }
+);
 
 export const updateExamSchema = z.object({
   title: z.string().min(1).optional(),
@@ -76,13 +84,25 @@ export const updateExamSchema = z.object({
     allowReview: z.boolean().optional(),
     preventTabSwitching: z.boolean().optional(),
     requireWebcam: z.boolean().optional(),
-    enableScreenMonitoring: z.boolean().optional(),
     lockdownBrowser: z.boolean().optional(),
     maxTabSwitchWarnings: z.number().min(1).max(10).optional(),
     enableFullscreenMode: z.boolean().optional(),
     disableDevTools: z.boolean().optional(),
     maxIntentionalViolations: z.number().min(1).max(20).optional(),
   }).optional(),
+});
+
+// For partial updates, validate that provided settings don't enable both options
+export const updateExamSchemaWithChecks = updateExamSchema.superRefine((val, ctx) => {
+  if (val.settings) {
+    const s = val.settings as any;
+    if (s.requireWebcam === true && s.enableFullscreenMode === true) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Cannot enable both webcam requirement and fullscreen mode at the same time',
+      });
+    }
+  }
 });
 
 // Attempt schemas

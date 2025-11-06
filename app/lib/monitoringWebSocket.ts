@@ -52,6 +52,14 @@ export interface TeacherMessageEvent {
   timestamp: number;
 }
 
+export interface ExamTerminatedEvent {
+  examId: string;
+  studentId: string;
+  terminatedBy: string;
+  reason: string;
+  timestamp: number;
+}
+
 let socket: Socket | null = null;
 
 // Initialize WebSocket connection
@@ -257,6 +265,29 @@ export function subscribeTeacherMessages(
   return () => {
     sock.off('teacher-message', onMessage);
   };
+}
+
+// Subscribe to exam termination events (for student)
+export function subscribeExamTermination(
+  onTerminated: (event: ExamTerminatedEvent) => void
+): () => void {
+  const sock = initializeMonitoringSocket();
+
+  sock.on('exam-terminated', onTerminated);
+
+  return () => {
+    sock.off('exam-terminated', onTerminated);
+  };
+}
+
+// Send termination event from teacher to student
+export function terminateStudentExam(studentId: string, examId: string, reason: string) {
+  const sock = getMonitoringSocket();
+  if (!sock || !sock.connected) {
+    return;
+  }
+
+  sock.emit('terminate-exam', { studentId, examId, reason });
 }
 
 // Send message from teacher to student

@@ -9,7 +9,8 @@ import {
   sendMonitoringEvent as sendWSMonitoringEvent,
   joinExamAsStudent,
   leaveExamAsStudent,
-  subscribeTeacherMessages
+  subscribeTeacherMessages,
+  subscribeExamTermination
 } from "../../lib/monitoringWebSocket";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
@@ -22,7 +23,8 @@ import {
   AlertTriangle,
   Camera,
   Shield,
-  Send
+  Send,
+  Ban
 } from "lucide-react";
 import { Exam } from "../../types";
 
@@ -36,7 +38,9 @@ export default function ExamInterface() {
   const [violations, setViolations] = useState<string[]>([]);
   const [teacherMessages, setTeacherMessages] = useState<Array<{ message: string; timestamp: number }>>([]);
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
-  const [isTerminated, setIsTerminated] = useState(false);
+  const [isTerminated, setIsTerminated] = useState(false); // Violation-based termination
+  const [examTerminated, setExamTerminated] = useState(false); // Teacher-initiated termination
+  const [terminationReason, setTerminationReason] = useState("");
   
   // Track violations by type with debouncing and count
   const violationTimestamps = useRef<Map<string, number>>(new Map());
@@ -68,6 +72,12 @@ export default function ExamInterface() {
             };
             setExam(fetchedExam);
             setAttemptId(startAttemptId as string);
+            
+            // Check if the attempt is already terminated
+            if (data.data.attempt?.status === 'TERMINATED') {
+              setExamTerminated(true);
+              setTerminationReason(data.data.terminationReason || 'Exam was terminated by the teacher');
+            }
           } else {
             console.error('Failed to fetch exam:', data.error);
             alert(data.error?.message || 'Failed to load exam');
@@ -166,7 +176,7 @@ export default function ExamInterface() {
   };
 
   const handleViolation = (violation: string) => {
-    if (isTerminated) return; // Ignore violations if exam is already terminated
+    if (isTerminated || examTerminated) return; // Ignore violations if exam is already terminated
 
     const eventType = mapToEventType(violation);
     const isIntentional = isIntentionalViolation(violation, eventType);
@@ -373,6 +383,19 @@ export default function ExamInterface() {
   }, [examSessionData.currentQuestionIndex, exam, user]);
 
   // Heartbeat (activity ping)
+  // Heartbeat (activity ping)
+  // Use refs for frequently changing values so the interval isn't restarted
+  // every time the current question or webcam status changes.
+  const currentQuestionIndexRef = useRef(examSessionData.currentQuestionIndex);
+  useEffect(() => {
+    currentQuestionIndexRef.current = examSessionData.currentQuestionIndex;
+  }, [examSessionData.currentQuestionIndex]);
+
+  const webcamActiveRef = useRef(webcam.isActive);
+  useEffect(() => {
+    webcamActiveRef.current = webcam.isActive;
+  }, [webcam.isActive]);
+
   useEffect(() => {
     if (!exam || !user) return;
     console.log('[Exam] Starting heartbeat for student:', user.id, 'exam:', exam.id);
@@ -382,8 +405,8 @@ export default function ExamInterface() {
         payload: {
           studentId: user.id,
           examId: exam.id,
-          questionIndex: examSessionData.currentQuestionIndex,
-          webcamActive: webcam.isActive,
+          questionIndex: currentQuestionIndexRef.current,
+          webcamActive: webcamActiveRef.current,
           timestamp: Date.now(),
         },
       };
@@ -394,7 +417,7 @@ export default function ExamInterface() {
       console.log('[Exam] Stopping heartbeat');
       clearInterval(interval);
     };
-  }, [exam, user, examSessionData.currentQuestionIndex, webcam.isActive]);
+  }, [exam, user]);
 
   // Webcam status change
   useEffect(() => {
@@ -409,6 +432,52 @@ export default function ExamInterface() {
       },
     });
   }, [webcam.isActive, exam, user]);
+
+  // Periodically capture and upload webcam snapshots while webcam is active.
+  useEffect(() => {
+    if (!exam || !user) return;
+    if (!attemptId) return; // need attempt to attribute snapshot
+
+    let stopped = false;
+    let uploading = false;
+
+    const uploadSnapshot = async () => {
+      if (stopped || uploading) return;
+      if (!webcam.isActive) return;
+      uploading = true;
+      try {
+        const dataUrl = await webcam.captureSnapshot();
+        if (!dataUrl) return;
+
+        // POST JSON payload expected by the API route
+        const res = await fetch('/api/media/snapshots', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ attemptId, image: dataUrl, type: 'WEBCAM' }),
+          credentials: 'include',
+        });
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          handleViolation(`Snapshot upload failed: ${res.status} ${res.statusText} ${text}`);
+        }
+      } catch (err: any) {
+        handleViolation(`Snapshot upload error: ${err?.message || String(err)}`);
+      } finally {
+        uploading = false;
+      }
+    };
+
+    // Take an immediate snapshot, then every 15s while active
+    const immediate = setTimeout(() => uploadSnapshot(), 1000);
+    const interval = setInterval(() => uploadSnapshot(), 15_000);
+
+    return () => {
+      stopped = true;
+      clearTimeout(immediate);
+      clearInterval(interval);
+    };
+  }, [webcam, attemptId, exam, user]);
 
   // Restore persisted violations history for this attempt on reload
   // Only show actual violations, not system events like EXAM_STARTED, EXAM_PAUSED, etc.
@@ -470,6 +539,25 @@ export default function ExamInterface() {
     return () => unsubscribe();
   }, [exam, user]);
 
+  // Listen for exam termination events
+  useEffect(() => {
+    if (!exam || !user) return;
+    const unsubscribe = subscribeExamTermination((evt) => {
+      if (evt.studentId === user.id && evt.examId === exam.id) {
+        setExamTerminated(true);
+        setTerminationReason(evt.reason || 'Exam was terminated by the teacher');
+        
+        // Immediately leave the exam monitoring
+        try {
+          leaveExamAsStudent(user.id, exam.id);
+        } catch {
+          // noop
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, [exam, user]);
+
   // Best-effort: notify server on page unload/refresh
   useEffect(() => {
     if (!exam || !user) return;
@@ -492,6 +580,47 @@ export default function ExamInterface() {
 
   if (!isAuthenticated || user?.role !== 'student' || !exam) {
     return null;
+  }
+
+  // Show termination screen if exam is terminated
+  if (examTerminated) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="max-w-md w-full mx-4">
+          <Card className="border-red-200">
+            <CardHeader className="text-center">
+              <div className="mx-auto mb-4 w-16 h-16 bg-red-100 rounded-full flex items-center justify-center">
+                <Ban className="h-8 w-8 text-red-600" />
+              </div>
+              <CardTitle className="text-2xl text-red-600">Exam Terminated</CardTitle>
+            </CardHeader>
+            <CardContent className="text-center space-y-4">
+              <div className="text-lg font-medium text-gray-900">{exam.title}</div>
+              <div className="text-gray-600">
+                Your exam has been terminated by the teacher and cannot be continued.
+              </div>
+              {terminationReason && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <div className="text-sm font-medium text-red-800 mb-1">Reason:</div>
+                  <div className="text-sm text-red-700">{terminationReason}</div>
+                </div>
+              )}
+              <div className="pt-4">
+                <Button 
+                  onClick={() => router.push("/dashboard/student")}
+                  className="w-full"
+                >
+                  Return to Dashboard
+                </Button>
+              </div>
+              <div className="text-xs text-gray-500">
+                If you believe this was done in error, please contact your teacher.
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
   }
 
   const progress = examSessionData.getProgress();
@@ -534,11 +663,11 @@ export default function ExamInterface() {
               {/* Submit Button */}
               <Button
                 onClick={() => setShowSubmitConfirm(true)}
-                disabled={isTerminated}
+                disabled={isTerminated || examTerminated}
                 className="bg-green-600 hover:bg-green-700"
               >
                 <Send className="h-4 w-4 mr-2" />
-                {isTerminated ? 'Submitting...' : 'Submit Exam'}
+                {(isTerminated || examTerminated) ? 'Submitting...' : 'Submit Exam'}
               </Button>
             </div>
           </div>

@@ -13,13 +13,18 @@ interface ExamSubmission {
   id: string;
   studentId: string;
   score: number | null;
-  totalPoints: number | null;
-  status: string;
-  submittedAt: string;
-  attempt: {
+  totalPoints?: number | null;
+  totalQuestions?: number;
+  percentage?: number;
+  plagiarismPercent?: number | null;
+  status?: string;
+  submittedAt?: string;
+  completedAt?: string;
+  timeSpent?: number;
+  attempt?: {
     timeSpent: number | null;
   };
-  student: {
+  student?: {
     id: string;
     name: string;
     email: string;
@@ -69,15 +74,19 @@ export default function ExamSubmissionsPage() {
 
   const results = useMemo(() => {
     return submissions.map(s => {
-      const totalPoints = s.totalPoints || 0;
-      const score = s.score || 0;
-      const percentage = totalPoints > 0 ? (score / totalPoints) * 100 : 0;
+      // Handle both data structures - normalize to common format
+      const totalPoints = s.totalPoints ?? s.totalQuestions ?? 0;
+      const score = s.score ?? 0;
+      const percentage = s.percentage ?? (totalPoints > 0 ? (score / totalPoints) * 100 : 0);
+      const completedAt = s.completedAt ?? s.submittedAt ?? '';
+      const timeSpent = s.timeSpent ?? (s.attempt?.timeSpent ? Math.floor(s.attempt.timeSpent / 60) : 0);
+      
       return {
         ...s,
         percentage,
-        totalQuestions: totalPoints, // For backward compatibility
-        completedAt: s.submittedAt,
-        timeSpent: s.attempt?.timeSpent ? Math.floor(s.attempt.timeSpent / 60) : 0,
+        totalQuestions: totalPoints,
+        completedAt,
+        timeSpent,
       };
     });
   }, [submissions]);
@@ -214,14 +223,21 @@ export default function ExamSubmissionsPage() {
               </div>
               <div className="flex items-center gap-4">
                 <Badge variant="outline" className="text-blue-600">
-                  {r.score?.toFixed(1) || 0}/{r.totalPoints || 0}
+                  {r.score?.toFixed(1) || 0}/{r.totalPoints || r.totalQuestions || 0}
                 </Badge>
-                <Badge className={r.percentage >= 70 ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}>
-                  <Percent className="h-3 w-3 mr-1" />{r.percentage.toFixed(1)}%
+                <Badge className={r.percentage && r.percentage >= 70 ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}>
+                  <Percent className="h-3 w-3 mr-1" />{r.percentage?.toFixed(1) || 0}%
                 </Badge>
-                <Badge className={r.status === 'GRADED' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'}>
-                  {r.status}
-                </Badge>
+                {r.status && (
+                  <Badge className={r.status === 'GRADED' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'}>
+                    {r.status}
+                  </Badge>
+                )}
+                {typeof r.plagiarismPercent === 'number' && (
+                  <Badge className={r.plagiarismPercent >= 50 ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}>
+                    Plagiarism: {r.plagiarismPercent}%
+                  </Badge>
+                )}
                 <Button
                   variant="outline"
                   size="sm"

@@ -15,7 +15,9 @@ import {
   Activity,
   Shield,
   Wifi,
-  WifiOff
+  WifiOff,
+  XCircle,
+  Ban
 } from "lucide-react";
 import { MonitoringData, FlaggedActivity } from "../../../types";
 import { 
@@ -27,6 +29,7 @@ import {
   joinExamAsTeacher,
   disconnectMonitoring,
   sendMessageToStudent,
+  terminateStudentExam,
   isMonitoringConnected,
   type MonitoringEvent 
 } from "../../../lib/monitoringWebSocket";
@@ -39,6 +42,10 @@ export default function TeacherMonitoringDashboard() {
   const [selectedStudent, setSelectedStudent] = useState<MonitoringData | null>(null);
   const [message, setMessage] = useState("");
   const [isConnected, setIsConnected] = useState(false);
+  const [showTerminateConfirm, setShowTerminateConfirm] = useState(false);
+  const [terminationReason, setTerminationReason] = useState("");
+  const [latestSnapshot, setLatestSnapshot] = useState<{ id: string; url: string; capturedAt: Date } | null>(null);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
 
   const handleIncomingEvent = useCallback((event: MonitoringEvent) => {
     if (!event || !event.type || !event.payload) {
@@ -263,6 +270,85 @@ export default function TeacherMonitoringDashboard() {
 
   const [studentNames, setStudentNames] = useState<Record<string, string>>({});
   const [examTotals, setExamTotals] = useState<Record<string, number>>({});
+  const selectedKey = selectedStudent ? `${selectedStudent.examId}:${selectedStudent.studentId}` : null;
+
+  useEffect(() => {
+    if (!selectedStudent) return;
+    const updated = activeStudents.find(
+      (s) => s.studentId === selectedStudent.studentId && s.examId === selectedStudent.examId,
+    );
+    if (!updated) {
+      setSelectedStudent(null);
+      return;
+    }
+    if (updated !== selectedStudent) {
+      setSelectedStudent(updated);
+    }
+  }, [activeStudents, selectedStudent]);
+
+  useEffect(() => {
+    setLatestSnapshot(null);
+    setSnapshotError(null);
+  }, [selectedKey]);
+
+  useEffect(() => {
+    if (!selectedStudent || !selectedStudent.webcamEnabled) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchLatestSnapshot = async () => {
+      try {
+        const params = new URLSearchParams({
+          examId: selectedStudent.examId,
+          studentId: selectedStudent.studentId,
+          _: Date.now().toString(),
+        });
+
+        const response = await fetch(`/api/media/snapshots?${params.toString()}`, {
+          cache: 'no-store',
+          credentials: 'include',
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const payload = await response.json();
+        if (cancelled) return;
+
+        if (payload?.success) {
+          if (payload.data) {
+            const capturedAt = payload.data.capturedAt ? new Date(payload.data.capturedAt) : new Date();
+            const displayUrl: string = payload.data.inlineData ?? payload.data.signedUrl ?? payload.data.url;
+            setLatestSnapshot((prev) => {
+              if (prev?.id === payload.data.id && prev?.url === displayUrl) {
+                return prev;
+              }
+              return { id: payload.data.id, url: displayUrl, capturedAt };
+            });
+            setSnapshotError(null);
+          } else {
+            setSnapshotError((prev) => prev ?? 'No snapshots received yet');
+          }
+        } else {
+          throw new Error(payload?.error || 'Failed to load snapshot');
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setSnapshotError('Failed to load snapshot');
+      }
+    };
+
+    fetchLatestSnapshot();
+    const intervalId = setInterval(fetchLatestSnapshot, 15_000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [selectedStudent, selectedKey]);
 
   // Fetch student names when needed
   useEffect(() => {
@@ -351,6 +437,44 @@ export default function TeacherMonitoringDashboard() {
     sendMessageToStudent(studentId, selectedStudent.examId, message);
     setMessage("");
     alert(`Message sent to ${getStudentName(studentId)}`);
+  };
+
+  const handleTerminateExam = async () => {
+    if (!selectedStudent || !terminationReason.trim()) return;
+
+    try {
+      // Use a generic endpoint and send studentId and examId in the body
+      const response = await fetch(`/api/attempts/terminate/exam`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          studentId: selectedStudent.studentId,
+          examId: selectedStudent.examId,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        // Send termination event via WebSocket for immediate notification
+        terminateStudentExam(selectedStudent.studentId, selectedStudent.examId, terminationReason);
+        
+        // Remove the student from the active list
+        setActiveStudents(prev => prev.filter(s => s.studentId !== selectedStudent.studentId));
+        setSelectedStudent(null);
+        setShowTerminateConfirm(false);
+        setTerminationReason("");
+        
+        alert(`Exam terminated for ${getStudentName(selectedStudent.studentId)}`);
+      } else {
+        alert(data.error?.message || 'Failed to terminate exam');
+      }
+    } catch (error) {
+      console.error('Failed to terminate exam:', error);
+      alert('Failed to terminate exam');
+    }
   };
 
   const formatTime = (date: Date) => {
@@ -572,7 +696,7 @@ export default function TeacherMonitoringDashboard() {
               </Card>
 
               {/* Webcam Feed */}
-              {selectedStudent.webcamEnabled && (
+              {/* {selectedStudent.webcamEnabled && (
                 <Card>
                   <CardHeader>
                     <CardTitle className="flex items-center space-x-2">
@@ -581,15 +705,30 @@ export default function TeacherMonitoringDashboard() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="aspect-video bg-gray-100 rounded border flex items-center justify-center">
-                      <div className="text-center text-gray-500">
-                        <Camera className="h-8 w-8 mx-auto mb-2" />
-                        <p className="text-sm">Live webcam feed would appear here</p>
-                      </div>
+                    <div className="aspect-video bg-gray-100 rounded border overflow-hidden flex items-center justify-center">
+                      {latestSnapshot ? (
+                        <img
+                          src={latestSnapshot.url}
+                          alt={`Latest snapshot of ${getStudentName(selectedStudent.studentId)}`}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className={`text-center px-4 ${snapshotError && snapshotError !== 'No snapshots received yet' ? 'text-red-600' : 'text-gray-500'}`}>
+                          <Camera className="h-8 w-8 mx-auto mb-2" />
+                          <p className="text-sm">
+                            {snapshotError ?? 'Waiting for first snapshot...'}
+                          </p>
+                        </div>
+                      )}
                     </div>
+                    {latestSnapshot && (
+                      <p className="text-xs text-gray-500 mt-2">
+                        Last captured {formatTime(latestSnapshot.capturedAt)}
+                      </p>
+                    )}
                   </CardContent>
                 </Card>
-              )}
+              )} */}
 
               {/* Flagged Activities */}
               <Card>
@@ -653,6 +792,31 @@ export default function TeacherMonitoringDashboard() {
                   </div>
                 </CardContent>
               </Card>
+
+              {/* Terminate Exam */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center space-x-2">
+                    <Ban className="h-5 w-5 text-red-600" />
+                    <span className="text-red-600">Terminate Exam</span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    <p className="text-sm text-gray-600">
+                      Immediately terminate this student's exam. This action cannot be undone.
+                    </p>
+                    <Button
+                      onClick={() => setShowTerminateConfirm(true)}
+                      variant="destructive"
+                      className="w-full"
+                    >
+                      <XCircle className="h-4 w-4 mr-2" />
+                      Terminate Exam
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
             </div>
           ) : (
             <Card>
@@ -666,6 +830,56 @@ export default function TeacherMonitoringDashboard() {
           )}
         </div>
       </div>
+
+      {/* Terminate Confirmation Modal */}
+      {showTerminateConfirm && selectedStudent && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold mb-4 text-red-600">Terminate Exam</h3>
+            <p className="text-gray-600 mb-4">
+              Are you sure you want to terminate the exam for <strong>{getStudentName(selectedStudent.studentId)}</strong>?
+            </p>
+            <p className="text-sm text-red-600 mb-4">
+              This action will immediately end their exam session and cannot be undone. The student will be redirected and will not be able to continue the exam.
+            </p>
+            
+            <div className="space-y-3 mb-6">
+              <label className="block text-sm font-medium text-gray-700">
+                Reason for termination (required):
+              </label>
+              <textarea
+                className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                rows={3}
+                placeholder="Enter the reason for terminating this exam..."
+                value={terminationReason}
+                onChange={(e) => setTerminationReason(e.target.value)}
+              />
+            </div>
+            
+            <div className="flex space-x-3">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowTerminateConfirm(false);
+                  setTerminationReason("");
+                }}
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleTerminateExam}
+                disabled={!terminationReason.trim()}
+                variant="destructive"
+                className="flex-1"
+              >
+                <Ban className="h-4 w-4 mr-2" />
+                Terminate
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
