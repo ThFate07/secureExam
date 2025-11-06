@@ -24,6 +24,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "crypto-js": "^4.2.0",
+    "dotenv": "^17.2.3",
     "framer-motion": "^12.23.16",
     "ioredis": "^5.8.1",
     "js-cookie": "^3.0.5",

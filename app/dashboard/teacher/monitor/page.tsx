@@ -15,7 +15,9 @@ import {
   Activity,
   Shield,
   Wifi,
-  WifiOff
+  WifiOff,
+  XCircle,
+  Ban
 } from "lucide-react";
 import { MonitoringData, FlaggedActivity } from "../../../types";
 import { 
@@ -27,6 +29,7 @@ import {
   joinExamAsTeacher,
   disconnectMonitoring,
   sendMessageToStudent,
+  terminateStudentExam,
   isMonitoringConnected,
   type MonitoringEvent 
 } from "../../../lib/monitoringWebSocket";
@@ -39,6 +42,8 @@ export default function TeacherMonitoringDashboard() {
   const [selectedStudent, setSelectedStudent] = useState<MonitoringData | null>(null);
   const [message, setMessage] = useState("");
   const [isConnected, setIsConnected] = useState(false);
+  const [showTerminateConfirm, setShowTerminateConfirm] = useState(false);
+  const [terminationReason, setTerminationReason] = useState("");
 
   const handleIncomingEvent = useCallback((event: MonitoringEvent) => {
     if (!event || !event.type || !event.payload) {
@@ -353,6 +358,44 @@ export default function TeacherMonitoringDashboard() {
     alert(`Message sent to ${getStudentName(studentId)}`);
   };
 
+  const handleTerminateExam = async () => {
+    if (!selectedStudent || !terminationReason.trim()) return;
+
+    try {
+      // Use a generic endpoint and send studentId and examId in the body
+      const response = await fetch(`/api/attempts/terminate/exam`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          studentId: selectedStudent.studentId,
+          examId: selectedStudent.examId,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        // Send termination event via WebSocket for immediate notification
+        terminateStudentExam(selectedStudent.studentId, selectedStudent.examId, terminationReason);
+        
+        // Remove the student from the active list
+        setActiveStudents(prev => prev.filter(s => s.studentId !== selectedStudent.studentId));
+        setSelectedStudent(null);
+        setShowTerminateConfirm(false);
+        setTerminationReason("");
+        
+        alert(`Exam terminated for ${getStudentName(selectedStudent.studentId)}`);
+      } else {
+        alert(data.error?.message || 'Failed to terminate exam');
+      }
+    } catch (error) {
+      console.error('Failed to terminate exam:', error);
+      alert('Failed to terminate exam');
+    }
+  };
+
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString('en-US', {
       hour: '2-digit',
@@ -653,6 +696,31 @@ export default function TeacherMonitoringDashboard() {
                   </div>
                 </CardContent>
               </Card>
+
+              {/* Terminate Exam */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center space-x-2">
+                    <Ban className="h-5 w-5 text-red-600" />
+                    <span className="text-red-600">Terminate Exam</span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    <p className="text-sm text-gray-600">
+                      Immediately terminate this student's exam. This action cannot be undone.
+                    </p>
+                    <Button
+                      onClick={() => setShowTerminateConfirm(true)}
+                      variant="destructive"
+                      className="w-full"
+                    >
+                      <XCircle className="h-4 w-4 mr-2" />
+                      Terminate Exam
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
             </div>
           ) : (
             <Card>
@@ -666,6 +734,56 @@ export default function TeacherMonitoringDashboard() {
           )}
         </div>
       </div>
+
+      {/* Terminate Confirmation Modal */}
+      {showTerminateConfirm && selectedStudent && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold mb-4 text-red-600">Terminate Exam</h3>
+            <p className="text-gray-600 mb-4">
+              Are you sure you want to terminate the exam for <strong>{getStudentName(selectedStudent.studentId)}</strong>?
+            </p>
+            <p className="text-sm text-red-600 mb-4">
+              This action will immediately end their exam session and cannot be undone. The student will be redirected and will not be able to continue the exam.
+            </p>
+            
+            <div className="space-y-3 mb-6">
+              <label className="block text-sm font-medium text-gray-700">
+                Reason for termination (required):
+              </label>
+              <textarea
+                className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                rows={3}
+                placeholder="Enter the reason for terminating this exam..."
+                value={terminationReason}
+                onChange={(e) => setTerminationReason(e.target.value)}
+              />
+            </div>
+            
+            <div className="flex space-x-3">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowTerminateConfirm(false);
+                  setTerminationReason("");
+                }}
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleTerminateExam}
+                disabled={!terminationReason.trim()}
+                variant="destructive"
+                className="flex-1"
+              >
+                <Ban className="h-4 w-4 mr-2" />
+                Terminate
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

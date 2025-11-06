@@ -9,7 +9,8 @@ import {
   sendMonitoringEvent as sendWSMonitoringEvent,
   joinExamAsStudent,
   leaveExamAsStudent,
-  subscribeTeacherMessages
+  subscribeTeacherMessages,
+  subscribeExamTermination
 } from "../../lib/monitoringWebSocket";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
@@ -22,7 +23,8 @@ import {
   AlertTriangle,
   Camera,
   Shield,
-  Send
+  Send,
+  Ban
 } from "lucide-react";
 import { Exam } from "../../types";
 
@@ -36,6 +38,8 @@ export default function ExamInterface() {
   const [violations, setViolations] = useState<string[]>([]);
   const [teacherMessages, setTeacherMessages] = useState<Array<{ message: string; timestamp: number }>>([]);
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
+  const [examTerminated, setExamTerminated] = useState(false);
+  const [terminationReason, setTerminationReason] = useState("");
 
   // Fetch exam data from API
   useEffect(() => {
@@ -58,6 +62,12 @@ export default function ExamInterface() {
             };
             setExam(fetchedExam);
             setAttemptId(startAttemptId as string);
+            
+            // Check if the attempt is already terminated
+            if (data.data.attempt?.status === 'TERMINATED') {
+              setExamTerminated(true);
+              setTerminationReason(data.data.terminationReason || 'Exam was terminated by the teacher');
+            }
           } else {
             console.error('Failed to fetch exam:', data.error);
             alert(data.error?.message || 'Failed to load exam');
@@ -304,6 +314,25 @@ export default function ExamInterface() {
     return () => unsubscribe();
   }, [exam, user]);
 
+  // Listen for exam termination events
+  useEffect(() => {
+    if (!exam || !user) return;
+    const unsubscribe = subscribeExamTermination((evt) => {
+      if (evt.studentId === user.id && evt.examId === exam.id) {
+        setExamTerminated(true);
+        setTerminationReason(evt.reason || 'Exam was terminated by the teacher');
+        
+        // Immediately leave the exam monitoring
+        try {
+          leaveExamAsStudent(user.id, exam.id);
+        } catch {
+          // noop
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, [exam, user]);
+
   // Best-effort: notify server on page unload/refresh
   useEffect(() => {
     if (!exam || !user) return;
@@ -326,6 +355,47 @@ export default function ExamInterface() {
 
   if (!isAuthenticated || user?.role !== 'student' || !exam) {
     return null;
+  }
+
+  // Show termination screen if exam is terminated
+  if (examTerminated) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="max-w-md w-full mx-4">
+          <Card className="border-red-200">
+            <CardHeader className="text-center">
+              <div className="mx-auto mb-4 w-16 h-16 bg-red-100 rounded-full flex items-center justify-center">
+                <Ban className="h-8 w-8 text-red-600" />
+              </div>
+              <CardTitle className="text-2xl text-red-600">Exam Terminated</CardTitle>
+            </CardHeader>
+            <CardContent className="text-center space-y-4">
+              <div className="text-lg font-medium text-gray-900">{exam.title}</div>
+              <div className="text-gray-600">
+                Your exam has been terminated by the teacher and cannot be continued.
+              </div>
+              {terminationReason && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <div className="text-sm font-medium text-red-800 mb-1">Reason:</div>
+                  <div className="text-sm text-red-700">{terminationReason}</div>
+                </div>
+              )}
+              <div className="pt-4">
+                <Button 
+                  onClick={() => router.push("/dashboard/student")}
+                  className="w-full"
+                >
+                  Return to Dashboard
+                </Button>
+              </div>
+              <div className="text-xs text-gray-500">
+                If you believe this was done in error, please contact your teacher.
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
   }
 
   const progress = examSessionData.getProgress();

@@ -86,12 +86,14 @@ export async function GET(
       throw new ApiError(403, 'Exam has ended');
     }
 
-    // Check attempts
+    // Check attempts (including terminated ones in the count)
     const attempts = await prisma.attempt.count({
       where: {
         examId: id,
         studentId: user.id,
-        status: AttemptStatus.SUBMITTED,
+        status: {
+          in: [AttemptStatus.SUBMITTED, AttemptStatus.TERMINATED]
+        },
       },
     });
 
@@ -107,6 +109,59 @@ export async function GET(
         status: AttemptStatus.IN_PROGRESS,
       },
     });
+
+    // Check for terminated attempt
+    const terminatedAttempt = await prisma.attempt.findFirst({
+      where: {
+        examId: id,
+        studentId: user.id,
+        status: AttemptStatus.TERMINATED,
+      },
+      include: {
+        monitoringEvents: {
+          where: {
+            type: 'EXAM_SUBMITTED',
+            description: {
+              contains: 'terminated by teacher'
+            }
+          },
+          orderBy: {
+            timestamp: 'desc'
+          },
+          take: 1
+        }
+      }
+    });
+
+    if (terminatedAttempt) {
+      // Return the exam data but mark it as terminated
+      const serializedExam: SerializedExam = {
+        id: exam.id,
+        title: exam.title,
+        description: exam.description ?? '',
+        teacherId: exam.createdById,
+        duration: exam.duration,
+        startTime: exam.startTime?.toISOString() ?? null,
+        endTime: exam.endTime?.toISOString() ?? null,
+        maxAttempts: exam.maxAttempts,
+        questions: [], // Don't return questions for terminated exam
+        settings: exam.settings,
+        status: lowerExamStatus(exam.status),
+        createdAt: exam.createdAt.toISOString(),
+      };
+
+      const terminationEvent = terminatedAttempt.monitoringEvents[0];
+      const terminationReason = terminationEvent?.description || 'Exam was terminated by the teacher';
+
+      return successResponse({
+        exam: serializedExam,
+        attemptId: terminatedAttempt.id,
+        attempt: {
+          status: 'TERMINATED',
+        },
+        terminationReason,
+      });
+    }
 
     if (inProgressAttempt) {
       // Return existing attempt
