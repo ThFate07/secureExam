@@ -3,7 +3,7 @@ import { errorHandler, successResponse, ApiError } from '@/app/lib/api/errors';
 import { requireStudent } from '@/app/lib/api/auth';
 import prisma from '@/app/lib/prisma';
 import { computePlagiarismForAttempt } from '@/app/lib/plagiarism';
-import { AttemptStatus } from '@prisma/client';
+import { AttemptStatus, SubmissionStatus } from '@prisma/client';
 
 interface AnswerSubmission {
   questionId: string;
@@ -65,8 +65,8 @@ export async function POST(
         const correctAnswer = question.correctAnswer;
         isCorrect = studentAnswer === (typeof correctAnswer === 'string' ? parseInt(correctAnswer) : correctAnswer);
         earnedPoints = isCorrect ? question.points : 0;
-      } else if (question.type === 'SHORT_ANSWER') {
-        // For short answer, mark as needing manual grading
+      } else if (question.type === 'SHORT_ANSWER' || question.type === 'ESSAY') {
+        // For short answer and essay, mark as needing manual grading
         earnedPoints = 0; // Will be graded manually
       }
 
@@ -74,7 +74,7 @@ export async function POST(
 
       return {
         questionId: question.id,
-        answer: studentAnswer,
+        answer: studentAnswer ?? null, // Handle undefined answers
         isCorrect,
         earnedPoints,
       };
@@ -82,30 +82,33 @@ export async function POST(
 
     // Persist each answer (upsert) so teacher can view them later
     for (const a of gradedAnswers) {
-      await prisma.answer.upsert({
-        where: {
-          attemptId_questionId: {
+      // Only save if answer exists (don't save null/undefined for unanswered questions)
+      if (a.answer !== null && a.answer !== undefined) {
+        await prisma.answer.upsert({
+          where: {
+            attemptId_questionId: {
+              attemptId,
+              questionId: a.questionId,
+            },
+          },
+          create: {
             attemptId,
             questionId: a.questionId,
+            answer: a.answer as any,
+            isCorrect: a.isCorrect || null,
+            pointsAwarded: a.earnedPoints || null,
+            timeSpent: 0,
+            flaggedForReview: false,
           },
-        },
-        create: {
-          attemptId,
-          questionId: a.questionId,
-          answer: a.answer as any,
-          isCorrect: a.isCorrect || null,
-          pointsAwarded: a.earnedPoints || null,
-          timeSpent: 0,
-          flaggedForReview: false,
-        },
-        update: {
-          answer: a.answer as any,
-          isCorrect: a.isCorrect || null,
-          pointsAwarded: a.earnedPoints || null,
-          timeSpent: 0,
-          flaggedForReview: false,
-        },
-      });
+          update: {
+            answer: a.answer as any,
+            isCorrect: a.isCorrect || null,
+            pointsAwarded: a.earnedPoints || null,
+            timeSpent: 0,
+            flaggedForReview: false,
+          },
+        });
+      }
     }
 
     // Update attempt
@@ -137,15 +140,27 @@ export async function POST(
       }
     }
 
-    // Create submission (store plagiarism info)
-    await (prisma as any).submission.create({
-      data: {
+    // Create or update submission (store plagiarism info)
+    // Use upsert in case submission already exists
+    await prisma.submission.upsert({
+      where: {
+        attemptId: attemptId,
+      },
+      create: {
         attemptId,
         studentId: user.id,
         score: totalScore,
         totalPoints,
         gradedAt: new Date(),
-        status: 'GRADED',
+        status: SubmissionStatus.GRADED,
+        plagiarismPercent: plagiarismPercent || null,
+        plagiarismDetails: plagiarismDetails || null,
+      },
+      update: {
+        score: totalScore,
+        totalPoints,
+        gradedAt: new Date(),
+        status: SubmissionStatus.GRADED,
         plagiarismPercent: plagiarismPercent || null,
         plagiarismDetails: plagiarismDetails || null,
       },

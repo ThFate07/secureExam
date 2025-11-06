@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "../../hooks/useAuth";
 import { useExamTimer, useAntiCheat, useWebcam, useExamSession } from "../../hooks/useExam";
@@ -63,15 +63,27 @@ export default function ExamInterface() {
         .then(res => res.json())
         .then(data => {
           if (data.success) {
-            const { exam: examData, attemptId: startAttemptId } = data.data;
+            const { exam: examData, attemptId: startAttemptId, savedAnswers, startTime } = data.data;
+            
+            // Calculate end time based on actual start time and duration
+            const actualStartTime = startTime ? new Date(startTime) : new Date();
+            const examDurationMs = examData.duration * 60 * 1000;
+            const calculatedEndTime = new Date(actualStartTime.getTime() + examDurationMs);
+            
             const fetchedExam: Exam = {
               ...examData,
-              startTime: data.data.exam.startTime ? new Date(data.data.exam.startTime) : new Date(),
-              endTime: data.data.exam.endTime ? new Date(data.data.exam.endTime) : new Date(Date.now() + data.data.exam.duration * 60 * 1000),
-              createdAt: new Date(data.data.exam.createdAt),
+              startTime: actualStartTime,
+              endTime: examData.endTime ? new Date(examData.endTime) : calculatedEndTime,
+              createdAt: new Date(examData.createdAt),
             };
             setExam(fetchedExam);
             setAttemptId(startAttemptId as string);
+            
+            // Restore saved answers if available (for page refresh)
+            if (savedAnswers && Object.keys(savedAnswers).length > 0) {
+              // Store saved answers to restore in examSessionData after it's initialized
+              (window as any).__restoreAnswers = savedAnswers;
+            }
             
             // Check if the attempt is already terminated
             if (data.data.attempt?.status === 'TERMINATED') {
@@ -360,7 +372,98 @@ export default function ExamInterface() {
     examId: id as string,
     questions: exam?.questions || [],
     onSubmit: handleSubmitExam,
+    attemptId: attemptId || undefined,
   });
+
+  // Restore saved answers on mount/refresh
+  useEffect(() => {
+    if (!exam || !attemptId) return;
+    
+    // Check if we have saved answers to restore
+    const restoreAnswers = async () => {
+      try {
+        const response = await fetch(`/api/attempts/${attemptId}/answers`);
+        const data = await response.json();
+        
+        if (data.success && data.data.answers) {
+          const savedAnswers = data.data.answers;
+          // Restore answers to examSessionData
+          for (const [questionId, answerData] of Object.entries(savedAnswers)) {
+            const answerInfo = answerData as { answer: string | number; flaggedForReview: boolean };
+            examSessionData.updateAnswer(questionId, answerInfo.answer);
+            if (answerInfo.flaggedForReview) {
+              examSessionData.toggleFlag(questionId);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Failed to restore saved answers:', error);
+        // Non-fatal - continue without restoration
+      }
+    };
+    
+    restoreAnswers();
+  }, [exam, attemptId, examSessionData]);
+
+  // Auto-save answers as student types (debounced)
+  const saveAnswerTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const previousAnswersRef = useRef<Map<string, string | number>>(new Map());
+  
+  const autoSaveAnswer = useCallback(async (questionId: string, answer: string | number) => {
+    if (!attemptId) return;
+    
+    // Clear existing timeout for this question
+    const existingTimeout = saveAnswerTimeoutRef.current.get(questionId);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+    }
+    
+    // Set new timeout to save after 2 seconds of no changes
+    const timeout = setTimeout(async () => {
+      try {
+        await fetch(`/api/attempts/${attemptId}/answers`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            questionId,
+            answer,
+            flaggedForReview: examSessionData.flaggedQuestions.has(questionId),
+          }),
+        });
+      } catch (error) {
+        console.error('Failed to auto-save answer:', error);
+        // Non-fatal - continue
+      } finally {
+        saveAnswerTimeoutRef.current.delete(questionId);
+      }
+    }, 2000);
+    
+    saveAnswerTimeoutRef.current.set(questionId, timeout);
+  }, [attemptId, examSessionData.flaggedQuestions]);
+
+  // Monitor answer changes and auto-save
+  useEffect(() => {
+    if (!exam || !attemptId) return;
+    
+    const currentAnswers = examSessionData.answers;
+    
+    // Check for new or changed answers
+    currentAnswers.forEach((answer, questionId) => {
+      const previousAnswer = previousAnswersRef.current.get(questionId);
+      if (previousAnswer !== answer) {
+        autoSaveAnswer(questionId, answer);
+      }
+    });
+    
+    // Update previous answers ref
+    previousAnswersRef.current = new Map(currentAnswers);
+    
+    // Cleanup timeouts on unmount
+    return () => {
+      saveAnswerTimeoutRef.current.forEach(timeout => clearTimeout(timeout));
+      saveAnswerTimeoutRef.current.clear();
+    };
+  }, [examSessionData.answers, exam, attemptId, autoSaveAnswer]);
 
   // Store examSessionData ref for violation handler
   const examSessionDataRef = useRef(examSessionData);
@@ -558,17 +661,36 @@ export default function ExamInterface() {
     return () => unsubscribe();
   }, [exam, user]);
 
-  // Best-effort: notify server on page unload/refresh
+  // Warn on page refresh and log as violation
   useEffect(() => {
-    if (!exam || !user) return;
+    if (!exam || !user || examTerminated || isTerminated) return;
+    
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      // Warn user about refresh
+      e.preventDefault();
+      e.returnValue = 'Refreshing the page during an exam may result in violations. Your progress is saved, but refreshing is not recommended.';
+      
+      // Log refresh attempt as violation
+      handleViolation('Page refresh attempted - progress saved but refresh is not allowed');
+      
+      return e.returnValue;
+    };
+    
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    // Also notify server on page unload/refresh
     const handler = () => {
       try {
         leaveExamAsStudent(user.id, exam.id);
       } catch {}
     };
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
-  }, [exam, user]);
+    window.addEventListener('unload', handler);
+    
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('unload', handler);
+    };
+  }, [exam, user, examTerminated, isTerminated]);
 
   if (loading) {
     return (

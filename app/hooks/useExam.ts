@@ -334,7 +334,6 @@ export function useWebcam({ enabled = false, onError }: UseWebcamProps) {
       streamRef.current = null;
     }
     if (mountedRef.current) {
->>>>>>> ca3113f906169ea9dd374217e97d1ec7f497bb57
       setStream(null);
       setIsActive(false);
     }
@@ -409,6 +408,7 @@ interface UseExamSessionProps {
   examId: string;
   questions: Question[];
   onSubmit: (answers: Map<string, string | number>) => void;
+  attemptId?: string;
 }
 
 export function useExamSession({ questions, onSubmit }: UseExamSessionProps) {

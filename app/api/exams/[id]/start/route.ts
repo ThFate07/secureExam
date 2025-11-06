@@ -169,7 +169,26 @@ export async function GET(
     }
 
     if (inProgressAttempt) {
-      // Return existing attempt
+      // Get saved answers for this attempt
+      const savedAnswers = await prisma.answer.findMany({
+        where: { attemptId: inProgressAttempt.id },
+        select: {
+          questionId: true,
+          answer: true,
+          flaggedForReview: true,
+        },
+      });
+
+      // Convert to map format
+      const answersMap: Record<string, { answer: string | number; flaggedForReview: boolean }> = {};
+      for (const a of savedAnswers) {
+        answersMap[a.questionId] = {
+          answer: a.answer as string | number,
+          flaggedForReview: a.flaggedForReview,
+        };
+      }
+
+      // Return existing attempt with saved answers
       const serializedExam: SerializedExam = {
         id: exam.id,
         title: exam.title,
@@ -196,6 +215,8 @@ export async function GET(
       return successResponse({
         exam: serializedExam,
         attemptId: inProgressAttempt.id,
+        savedAnswers: answersMap, // Include saved answers for restoration
+        startTime: inProgressAttempt.startTime.toISOString(), // Return actual start time for accurate timer
       });
     }
 
