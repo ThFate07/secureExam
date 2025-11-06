@@ -21,7 +21,6 @@ export interface ExamSecuritySettings {
   shuffleOptions: boolean;
   showResultsImmediately: boolean;
   allowReview: boolean;
-  maxTabSwitchWarnings: number;
   enableFullscreenMode: boolean;
 }
 
@@ -108,7 +107,6 @@ export function createExam(partial: Partial<StoredExam>): StoredExam {
     shuffleOptions: false,
     showResultsImmediately: true,
     allowReview: true,
-    maxTabSwitchWarnings: 3,
     enableFullscreenMode: false,
   };
   const created: StoredExam = {

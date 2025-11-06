@@ -9,6 +9,56 @@ import { CheckCircle, AlertTriangle, Camera, ArrowLeft, Play } from "lucide-reac
 import { useAuth } from "../../../hooks/useAuth";
 import { api } from "../../../lib/api/client";
 
+interface SetupExamQuestion {
+  id: string;
+  points: number;
+}
+
+const normalizeExamQuestions = (examData: unknown): SetupExamQuestion[] => {
+  if (!examData || typeof examData !== "object") {
+    return [];
+  }
+
+  const data = examData as Record<string, unknown>;
+
+  if (Array.isArray(data.questions)) {
+    return data.questions
+      .map((q) => {
+        if (q && typeof q === "object") {
+          const question = q as Record<string, unknown>;
+          return {
+            id: String(question.id ?? ""),
+            points: typeof question.points === "number" ? question.points : Number(question.points) || 0,
+          };
+        }
+        return { id: "", points: 0 };
+      })
+      .filter((q) => q.id);
+  }
+
+  if (Array.isArray(data.examQuestions)) {
+    return data.examQuestions
+      .map((eq) => {
+        if (eq && typeof eq === "object") {
+          const examQuestion = eq as Record<string, unknown>;
+          const nestedQuestion = examQuestion.question as Record<string, unknown> | undefined;
+
+          const id = nestedQuestion?.id ?? examQuestion.id ?? "";
+          const pointsValue = nestedQuestion?.points ?? examQuestion.points ?? 0;
+
+          return {
+            id: String(id),
+            points: typeof pointsValue === "number" ? pointsValue : Number(pointsValue) || 0,
+          };
+        }
+        return { id: "", points: 0 };
+      })
+      .filter((q) => q.id);
+  }
+
+  return [];
+};
+
 export default function StartExamPage() {
   const router = useRouter();
   const params = useParams();
@@ -21,8 +71,15 @@ export default function StartExamPage() {
     preventTabSwitching?: boolean;
     [key: string]: unknown;
   }
-  interface ExamQuestion { id: string; points: number; [k: string]: unknown }
-  interface ExamData { id: string; title: string; description: string; duration: number; totalQuestions: number; questions: ExamQuestion[]; settings?: ExamSecuritySettings }
+  interface ExamData {
+    id: string;
+    title: string;
+    description: string;
+    duration: number;
+    totalQuestions: number;
+    questions: SetupExamQuestion[];
+    settings?: ExamSecuritySettings;
+  }
   const [exam, setExam] = useState<ExamData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -42,17 +99,16 @@ export default function StartExamPage() {
         const examData = await api.exams.get(examId);
         
         if (examData) {
+          const normalizedQuestions = normalizeExamQuestions(examData);
+
           setExam({
             id: examData.id,
             title: examData.title,
-            description: examData.description || '',
+            description: examData.description || "",
             duration: examData.duration,
-            totalQuestions: examData.questions?.length || 0,
-            questions: examData.questions?.map((q: ExamQuestion) => ({ 
-              id: q.id, 
-              points: q.points 
-            })) || [],
-            settings: examData.settings || {}
+            totalQuestions: normalizedQuestions.length,
+            questions: normalizedQuestions,
+            settings: (examData.settings && typeof examData.settings === "object") ? examData.settings : {},
           });
         } else {
           setError('Exam not found');
@@ -178,7 +234,7 @@ export default function StartExamPage() {
                 <span className="font-medium">Questions:</span> {exam.totalQuestions}
               </div>
               <div>
-                <span className="font-medium">Total Points:</span> {exam.questions.reduce((sum: number, q: ExamQuestion) => sum + q.points, 0)}
+                <span className="font-medium">Total Points:</span> {exam.questions.reduce((sum, q) => sum + q.points, 0)}
               </div>
               <div>
                 <span className="font-medium">Student:</span> {user?.name}

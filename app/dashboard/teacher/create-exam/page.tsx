@@ -42,7 +42,6 @@ const CreateExamPage: React.FC = () => {
     shuffleOptions: false,
     showResultsImmediately: true,
     allowReview: true,
-    maxTabSwitchWarnings: 3,
     enableFullscreenMode: false,
   };
 
@@ -166,7 +165,6 @@ const CreateExamPage: React.FC = () => {
           preventTabSwitching: form.securitySettings.preventTabSwitching,
           requireWebcam: form.securitySettings.requireWebcam,
           lockdownBrowser: form.securitySettings.lockdownBrowser,
-          maxTabSwitchWarnings: form.securitySettings.maxTabSwitchWarnings,
           enableFullscreenMode: form.securitySettings.enableFullscreenMode,
         },
       };

@@ -30,6 +30,16 @@ interface SerializedExam {
   createdAt: string;
 }
 
+interface ShufflingMetadata {
+  shuffledQuestionIds?: string[];
+  optionsPermutation?: Record<string, number[] | undefined>;
+}
+
+type ExamSettingsType = ShufflingMetadata & {
+  shuffleQuestions?: boolean;
+  shuffleOptions?: boolean;
+};
+
 const lowerExamStatus = (status: ExamStatus): LowercaseExamStatus =>
   status.toLowerCase() as LowercaseExamStatus;
 
@@ -164,25 +174,56 @@ export async function GET(
     }
 
     if (inProgressAttempt) {
-      // Return existing attempt
+      // Return existing attempt — preserve previously generated shuffling metadata if any
+      const attemptWithMeta = await prisma.attempt.findUnique({
+        where: { id: inProgressAttempt.id },
+      });
+
+  const metadata = (attemptWithMeta?.metadata ?? {}) as ShufflingMetadata;
+
+      // Build base question list (preserve DB order)
+      const baseQuestions = exam.examQuestions.map((eq) => ({
+        id: eq.question.id,
+        type: eq.question.type.toLowerCase().replace(/_/g, '-'),
+        question: eq.question.question,
+        options: eq.question.options ? (eq.question.options as string[]) : undefined,
+        points: eq.question.points,
+        order: eq.order,
+      } as SerializedQuestion));
+
+      const shuffledQuestionIds = Array.isArray(metadata.shuffledQuestionIds)
+        ? (metadata.shuffledQuestionIds as string[])
+        : baseQuestions.map((q) => q.id);
+
+      const optionsPermutation = (metadata.optionsPermutation ?? {}) as Record<string, number[] | undefined>;
+
+      const questionsForClient: SerializedQuestion[] = [];
+
+      for (const qid of shuffledQuestionIds) {
+        const q = baseQuestions.find((b) => b.id === qid)!;
+        if (!q) continue;
+
+        const perm = optionsPermutation[q.id];
+        if (Array.isArray(perm) && Array.isArray(q.options)) {
+          // reconstruct shuffled options from permutation (perm[newIndex] = originalIndex)
+          const original = q.options.slice();
+          const shuffled = perm.map((origIdx) => original[origIdx]);
+          questionsForClient.push({ ...q, options: shuffled });
+        } else {
+          questionsForClient.push(q);
+        }
+      }
+
       const serializedExam: SerializedExam = {
         id: exam.id,
         title: exam.title,
-  description: exam.description ?? '',
+        description: exam.description ?? '',
         teacherId: exam.createdById,
         duration: exam.duration,
         startTime: exam.startTime?.toISOString() ?? null,
         endTime: exam.endTime?.toISOString() ?? null,
         maxAttempts: exam.maxAttempts,
-        questions: exam.examQuestions.map((eq) => ({
-          id: eq.question.id,
-          // Normalize DB enum like "SHORT_ANSWER" -> "short-answer" to match frontend Question.type
-          type: eq.question.type.toLowerCase().replace(/_/g, '-'),
-          question: eq.question.question,
-          options: eq.question.options ? (eq.question.options as string[]) : undefined,
-          points: eq.question.points,
-          order: eq.order,
-        })),
+        questions: questionsForClient,
         settings: exam.settings,
         status: lowerExamStatus(exam.status),
         createdAt: exam.createdAt.toISOString(),
@@ -194,34 +235,83 @@ export async function GET(
       });
     }
 
-    // Create new attempt
+    // Create new attempt — build shuffling metadata if enabled
+    // Parse settings (stored as JSON in DB)
+  const settings = (exam.settings ?? {}) as ExamSettingsType;
+  const shouldShuffleQuestions = Boolean(settings.shuffleQuestions);
+  const shouldShuffleOptions = Boolean(settings.shuffleOptions);
+
+    // Helper: Fisher-Yates shuffle returning new array and permutation
+    const shuffleArray = <T,>(arr: T[]) => {
+      const a = arr.slice();
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    };
+
+    // Build base question list (preserve DB order)
+    const baseQuestions = exam.examQuestions.map((eq) => ({
+      id: eq.question.id,
+      type: eq.question.type.toLowerCase().replace(/_/g, '-'),
+      question: eq.question.question,
+      options: eq.question.options ? (eq.question.options as string[]) : undefined,
+      points: eq.question.points,
+      order: eq.order,
+    } as SerializedQuestion));
+
+    // Compute shuffled question order (array of question ids)
+    const shuffledQuestionIds = shouldShuffleQuestions ? shuffleArray(baseQuestions.map((q) => q.id)) : baseQuestions.map((q) => q.id);
+
+    // Compute options permutations: map questionId -> permutation array (newIndex -> originalIndex)
+    const optionsPermutation: Record<string, number[] | undefined> = {};
+
+    const questionsForClient: SerializedQuestion[] = [];
+
+    // For each question id in shuffled order, prepare question object (with possibly shuffled options)
+    for (const qid of shuffledQuestionIds) {
+      const q = baseQuestions.find((b) => b.id === qid)!;
+      if (!q) continue;
+
+      if (shouldShuffleOptions && Array.isArray(q.options) && q.options.length > 1) {
+        const originalOptions = q.options.slice();
+        const shuffled = shuffleArray(originalOptions);
+        // Build permutation mapping newIndex -> originalIndex
+        const perm: number[] = shuffled.map((opt) => originalOptions.indexOf(opt));
+        optionsPermutation[q.id] = perm;
+        questionsForClient.push({ ...q, options: shuffled });
+      } else {
+        // no shuffling
+        optionsPermutation[q.id] = undefined;
+        questionsForClient.push(q);
+      }
+    }
+
+    // Create attempt with metadata containing shuffling information
     const newAttempt = await prisma.attempt.create({
       data: {
         examId: id,
         studentId: user.id,
         startTime: new Date(),
         status: AttemptStatus.IN_PROGRESS,
+        metadata: {
+          shuffledQuestionIds,
+          optionsPermutation,
+        },
       },
     });
 
     const serializedExam: SerializedExam = {
       id: exam.id,
       title: exam.title,
-  description: exam.description ?? '',
+      description: exam.description ?? '',
       teacherId: exam.createdById,
       duration: exam.duration,
       startTime: exam.startTime?.toISOString() ?? null,
       endTime: exam.endTime?.toISOString() ?? null,
       maxAttempts: exam.maxAttempts,
-      questions: exam.examQuestions.map((eq) => ({
-        id: eq.question.id,
-        // Normalize DB enum like "SHORT_ANSWER" -> "short-answer" to match frontend Question.type
-        type: eq.question.type.toLowerCase().replace(/_/g, '-'),
-        question: eq.question.question,
-        options: eq.question.options ? (eq.question.options as string[]) : undefined,
-        points: eq.question.points,
-        order: eq.order,
-      })),
+      questions: questionsForClient,
       settings: exam.settings,
       status: lowerExamStatus(exam.status),
       createdAt: exam.createdAt.toISOString(),

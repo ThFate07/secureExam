@@ -10,6 +10,10 @@ interface AnswerSubmission {
   answer: string | number;
 }
 
+interface ShufflingMetadata {
+  optionsPermutation?: Record<string, number[] | undefined>;
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -48,10 +52,12 @@ export async function POST(
       throw new ApiError(400, 'Attempt is not in progress');
     }
 
-    // Calculate score
+  // Calculate score — respect option permutations stored in attempt.metadata if options were shuffled
     let totalScore = 0;
     let totalPoints = 0;
     const answersMap = new Map(answers.map((a) => [a.questionId, a.answer]));
+
+  const metadata = (attempt.metadata ?? {}) as ShufflingMetadata;
 
     const gradedAnswers = attempt.exam.examQuestions.map((eq) => {
       const question = eq.question;
@@ -62,8 +68,16 @@ export async function POST(
       let earnedPoints = 0;
 
       if (question.type === 'MCQ' && typeof studentAnswer === 'number') {
+        // Map student's selected index (relative to shuffled options) back to original option index
+        let selectedOriginalIndex = studentAnswer as number;
+        const perm = metadata?.optionsPermutation ? (metadata.optionsPermutation as Record<string, number[] | undefined>)[question.id] : undefined;
+        if (Array.isArray(perm) && typeof studentAnswer === 'number') {
+          selectedOriginalIndex = perm[studentAnswer as number];
+        }
+
         const correctAnswer = question.correctAnswer;
-        isCorrect = studentAnswer === (typeof correctAnswer === 'string' ? parseInt(correctAnswer) : correctAnswer);
+        const correctIndex = typeof correctAnswer === 'string' ? parseInt(correctAnswer) : correctAnswer;
+        isCorrect = selectedOriginalIndex === correctIndex;
         earnedPoints = isCorrect ? question.points : 0;
       } else if (question.type === 'SHORT_ANSWER') {
         // For short answer, mark as needing manual grading

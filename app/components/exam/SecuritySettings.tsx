@@ -3,8 +3,7 @@
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Label } from '../ui/label';
-import { Input } from '../ui/input';
-import { Shield, Eye, Lock, Shuffle, Clock, CheckSquare } from 'lucide-react';
+import { Shield, Eye, Lock, Shuffle, CheckSquare } from 'lucide-react';
 import { ExamSecuritySettings } from '../../lib/examStore';
 
 interface SecuritySettingsProps {
@@ -106,31 +105,7 @@ const SecuritySettings: React.FC<SecuritySettingsProps> = ({ settings, onChange 
         </div>
 
         {/* Tab Switch Warnings */}
-        <div className="space-y-4">
-          <h4 className="font-medium text-sm text-gray-700 flex items-center gap-2">
-            <Clock className="h-4 w-4" />
-            Warning Settings
-          </h4>
-          <div className="pl-6">
-            <div className="space-y-2">
-              <Label htmlFor="maxWarnings" className="text-sm">
-                Maximum tab switch warnings before flagging
-              </Label>
-              <Input
-                id="maxWarnings"
-                type="number"
-                min={1}
-                max={10}
-                value={settings.maxTabSwitchWarnings}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateSetting('maxTabSwitchWarnings', parseInt(e.target.value, 10) || 3)}
-                className="w-20"
-              />
-              <p className="text-xs text-gray-500">
-                Student will be flagged after exceeding this number of tab switches
-              </p>
-            </div>
-          </div>
-        </div>
+        {/* Tab Switch Warnings removed — browser tab monitoring is unreliable across browsers and was removed */}
 
         {/* Question Randomization */}
         <div className="space-y-4">
