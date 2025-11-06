@@ -136,6 +136,7 @@ export const monitoringEventSchema = z.object({
     'MULTIPLE_FACES',
     'NO_FACE_DETECTED',
     'FACE_CHANGED',
+    'LOOKING_AWAY',
     'WEBCAM_DISABLED',
     'WEBCAM_ENABLED',
     'EXAM_STARTED',

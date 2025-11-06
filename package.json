@@ -18,6 +18,8 @@
     "@prisma/client": "^6.17.1",
     "@radix-ui/react-progress": "^1.1.7",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@tensorflow/tfjs": "^4.21.0",
+    "@tensorflow/tfjs-node": "^4.21.0",
     "@types/bcrypt": "^6.0.0",
     "@types/jsonwebtoken": "^9.0.10",
     "bcrypt": "^6.0.0",
@@ -25,6 +27,7 @@
     "clsx": "^2.1.1",
     "crypto-js": "^4.2.0",
     "dotenv": "^17.2.3",
+    "face-api.js": "^0.22.2",
     "framer-motion": "^12.23.16",
     "ioredis": "^5.8.1",
     "js-cookie": "^3.0.5",
@@ -36,6 +39,7 @@
     "react-dom": "19.1.0",
     "react-hook-form": "^7.63.0",
     "react-webcam": "^7.2.0",
+    "sharp": "^0.33.5",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
     "tailwind-merge": "^3.3.1",
@@ -55,5 +59,8 @@
     "tailwindcss": "^4",
     "ts-node": "^10.9.2",
     "typescript": "^5"
+  },
+  "optionalDependencies": {
+    "canvas": "^3.2.0"
   }
 }

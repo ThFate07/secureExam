@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "../../hooks/useAuth";
 import { useExamTimer, useAntiCheat, useWebcam, useExamSession } from "../../hooks/useExam";
+import { useFaceDetection } from "../../hooks/useFaceDetection";
 // Use WebSocket-based monitoring for cross-device real-time updates
 import { 
   sendMonitoringEvent as sendWSMonitoringEvent,
@@ -24,7 +25,8 @@ import {
   Camera,
   Shield,
   Send,
-  Ban
+  Ban,
+  Activity
 } from "lucide-react";
 import { Exam } from "../../types";
 
@@ -41,6 +43,7 @@ export default function ExamInterface() {
   const [isTerminated, setIsTerminated] = useState(false); // Violation-based termination
   const [examTerminated, setExamTerminated] = useState(false); // Teacher-initiated termination
   const [terminationReason, setTerminationReason] = useState("");
+  const videoElementRef = useRef<HTMLVideoElement | null>(null);
   
   // Track violations by type with debouncing and count
   const violationTimestamps = useRef<Map<string, number>>(new Map());
@@ -368,6 +371,41 @@ export default function ExamInterface() {
     onError: (error) => handleViolation(`Webcam error: ${error}`),
   });
 
+  // Face detection for suspicious behavior
+  const faceDetection = useFaceDetection({
+    enabled: exam?.settings.requireWebcam || false,
+    videoElement: videoElementRef.current || undefined,
+    onViolation: (type, description) => {
+      // Map face detection violations to violation handler
+      handleViolation(`Face detection: ${description}`);
+      
+      // Send monitoring event
+      if (exam && attemptId && user) {
+        const severity = type === 'FACE_CHANGED' || type === 'MULTIPLE_FACES' ? 'HIGH' : 'MEDIUM';
+        sendWSMonitoringEvent({
+          examId: exam.id,
+          attemptId,
+          type: type as any,
+          severity: severity as any,
+          description,
+        }).catch(() => {
+          // Fallback to HTTP API if WebSocket fails
+          fetch('/api/monitor/events', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              examId: exam.id,
+              attemptId,
+              type: type as any,
+              severity: severity as any,
+              description,
+            }),
+          }).catch(() => {});
+        });
+      }
+    },
+  });
+
   const examSessionData = useExamSession({
     examId: id as string,
     questions: exam?.questions || [],
@@ -376,13 +414,19 @@ export default function ExamInterface() {
   });
 
   // Restore saved answers on mount/refresh
+  const restoreAnswersAttempted = useRef(false);
   useEffect(() => {
-    if (!exam || !attemptId) return;
+    if (!exam || !attemptId || restoreAnswersAttempted.current) return;
+    restoreAnswersAttempted.current = true;
     
     // Check if we have saved answers to restore
     const restoreAnswers = async () => {
       try {
         const response = await fetch(`/api/attempts/${attemptId}/answers`);
+        if (!response.ok) {
+          // Server returned an error, don't retry
+          return;
+        }
         const data = await response.json();
         
         if (data.success && data.data.answers) {
@@ -397,6 +441,11 @@ export default function ExamInterface() {
           }
         }
       } catch (error) {
+        // Only log if it's not a connection error (server not running)
+        if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+          // Server is not running or connection refused - silent fail
+          return;
+        }
         console.error('Failed to restore saved answers:', error);
         // Non-fatal - continue without restoration
       }
@@ -974,6 +1023,7 @@ export default function ExamInterface() {
                       playsInline
                       className="w-full rounded border"
                       ref={(video) => {
+                        videoElementRef.current = video;
                         if (video && webcam.stream) {
                           // Only update if stream has changed to prevent flickering
                           if (video.srcObject !== webcam.stream) {
@@ -1004,6 +1054,147 @@ export default function ExamInterface() {
                 </CardContent>
               </Card>
             )}
+
+            {/* DEBUG_DEV_FACE_DETECTION_PANEL - Remove this entire block when done testing */}
+            {exam.settings.requireWebcam && (
+              <Card className="border-2 border-yellow-400 bg-yellow-50">
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center space-x-2 text-yellow-800">
+                    <Activity className="h-5 w-5" />
+                    <span>DEBUG: Face Detection Status</span>
+                  </CardTitle>
+                  <p className="text-xs text-yellow-700">This panel is for testing only - will be removed later</p>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <span className="font-medium text-gray-700">Detection Ready:</span>
+                      <span className={`ml-2 px-2 py-1 rounded text-xs ${
+                        faceDetection.isReady ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                      }`}>
+                        {faceDetection.isReady ? 'YES' : 'NO'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-700">Webcam Active:</span>
+                      <span className={`ml-2 px-2 py-1 rounded text-xs ${
+                        webcam.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                      }`}>
+                        {webcam.isActive ? 'YES' : 'NO'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {faceDetection.lastDetection && (
+                    <div className="mt-4 p-3 bg-white rounded border border-yellow-300">
+                      <h4 className="font-semibold text-sm mb-2 text-gray-800">Last Detection Result:</h4>
+                      <div className="space-y-2 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-600">Face Count:</span>
+                          <span className={`font-medium px-2 py-1 rounded ${
+                            faceDetection.lastDetection.faceCount === 0 
+                              ? 'bg-red-100 text-red-800'
+                              : faceDetection.lastDetection.hasMultipleFaces
+                              ? 'bg-orange-100 text-orange-800'
+                              : 'bg-green-100 text-green-800'
+                          }`}>
+                            {faceDetection.lastDetection.faceCount}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-600">Has Face:</span>
+                          <span className={`font-medium px-2 py-1 rounded ${
+                            faceDetection.lastDetection.hasFace 
+                              ? 'bg-green-100 text-green-800' 
+                              : 'bg-red-100 text-red-800'
+                          }`}>
+                            {faceDetection.lastDetection.hasFace ? 'YES' : 'NO'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-600">Multiple Faces:</span>
+                          <span className={`font-medium px-2 py-1 rounded ${
+                            faceDetection.lastDetection.hasMultipleFaces 
+                              ? 'bg-orange-100 text-orange-800' 
+                              : 'bg-gray-100 text-gray-800'
+                          }`}>
+                            {faceDetection.lastDetection.hasMultipleFaces ? 'YES ⚠️' : 'NO'}
+                          </span>
+                        </div>
+                        {faceDetection.lastDetection.confidence > 0 && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-600">Confidence:</span>
+                            <span className="font-medium text-gray-800">
+                              {(faceDetection.lastDetection.confidence * 100).toFixed(1)}%
+                            </span>
+                          </div>
+                        )}
+                        {faceDetection.lastDetection.headPose && (
+                          <div className="mt-3 pt-3 border-t border-gray-200">
+                            <h5 className="font-semibold text-xs mb-2 text-gray-700">Head Pose:</h5>
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-600">Yaw (Left/Right):</span>
+                                <span className={`font-medium px-2 py-1 rounded text-xs ${
+                                  Math.abs(faceDetection.lastDetection.headPose.yaw) > 30
+                                    ? 'bg-orange-100 text-orange-800'
+                                    : 'bg-gray-100 text-gray-800'
+                                }`}>
+                                  {faceDetection.lastDetection.headPose.yaw.toFixed(1)}°
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-600">Pitch (Up/Down):</span>
+                                <span className={`font-medium px-2 py-1 rounded text-xs ${
+                                  Math.abs(faceDetection.lastDetection.headPose.pitch) > 25
+                                    ? 'bg-orange-100 text-orange-800'
+                                    : 'bg-gray-100 text-gray-800'
+                                }`}>
+                                  {faceDetection.lastDetection.headPose.pitch.toFixed(1)}°
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-600">Roll (Tilt):</span>
+                                <span className="font-medium text-gray-800">
+                                  {faceDetection.lastDetection.headPose.roll.toFixed(1)}°
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between mt-2">
+                                <span className="text-gray-600">Looking Away:</span>
+                                <span className={`font-medium px-2 py-1 rounded text-xs ${
+                                  faceDetection.lastDetection.headPose.isLookingAway
+                                    ? 'bg-red-100 text-red-800'
+                                    : 'bg-green-100 text-green-800'
+                                }`}>
+                                  {faceDetection.lastDetection.headPose.isLookingAway ? 'YES ⚠️' : 'NO'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {!faceDetection.lastDetection && faceDetection.isReady && (
+                    <div className="mt-4 p-3 bg-gray-100 rounded border border-gray-300">
+                      <p className="text-xs text-gray-600 text-center">
+                        Waiting for face detection... (runs every 2 seconds)
+                      </p>
+                    </div>
+                  )}
+
+                  {!faceDetection.isReady && (
+                    <div className="mt-4 p-3 bg-yellow-100 rounded border border-yellow-300">
+                      <p className="text-xs text-yellow-800 text-center">
+                        Loading face detection models...
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+            {/* END_DEBUG_DEV_FACE_DETECTION_PANEL */}
 
             {/* Teacher Messages */}
             {teacherMessages.length > 0 && (

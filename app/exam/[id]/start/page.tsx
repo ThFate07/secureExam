@@ -42,16 +42,24 @@ export default function StartExamPage() {
         const examData = await api.exams.get(examId);
         
         if (examData) {
+          // Handle both examQuestions (from /api/exams/[id]) and questions (from /api/exams/[id]/start)
+          const questions = examData.examQuestions 
+            ? examData.examQuestions.map((eq: { question: ExamQuestion; order: number }) => ({
+                id: eq.question.id,
+                points: eq.question.points
+              }))
+            : examData.questions?.map((q: ExamQuestion) => ({ 
+                id: q.id, 
+                points: q.points 
+              })) || [];
+          
           setExam({
             id: examData.id,
             title: examData.title,
             description: examData.description || '',
             duration: examData.duration,
-            totalQuestions: examData.questions?.length || 0,
-            questions: examData.questions?.map((q: ExamQuestion) => ({ 
-              id: q.id, 
-              points: q.points 
-            })) || [],
+            totalQuestions: questions.length,
+            questions: questions,
             settings: examData.settings || {}
           });
         } else {

@@ -265,6 +265,10 @@ export default function TeacherMonitoringDashboard() {
     if (/fullscreen/i.test(desc)) return 'fullscreen-exit';
     if (/right-click/i.test(desc)) return 'right-click';
     if (/blur|focus|switch/i.test(desc)) return 'tab-switch';
+    if (/multiple.*face|face.*multiple/i.test(desc)) return 'suspicious-behavior';
+    if (/no.*face|face.*not.*detect/i.test(desc)) return 'suspicious-behavior';
+    if (/face.*change|different.*face/i.test(desc)) return 'suspicious-behavior';
+    if (/looking.*away|head.*pose/i.test(desc)) return 'suspicious-behavior';
     return 'suspicious-behavior';
   };
 
@@ -741,22 +745,46 @@ export default function TeacherMonitoringDashboard() {
                 <CardContent>
                   {selectedStudent.flaggedActivities.length > 0 ? (
                     <div className="space-y-3">
-                      {selectedStudent.flaggedActivities.slice(0, 5).map((activity) => (
-                        <div key={activity.id} className="flex items-start space-x-3 p-3 bg-gray-50 rounded">
-                          <div className={`p-1 rounded ${getSeverityColor(activity.severity)}`}>
-                            {getActivityTypeIcon(activity.type)}
+                      {selectedStudent.flaggedActivities.slice(0, 10).map((activity) => {
+                        // Check if this is a face detection event
+                        const isFaceDetection = /face|multiple.*face|no.*face|looking.*away/i.test(activity.description);
+                        const faceDetectionType = 
+                          /multiple.*face/i.test(activity.description) ? 'MULTIPLE_FACES' :
+                          /no.*face|face.*not.*detect/i.test(activity.description) ? 'NO_FACE_DETECTED' :
+                          /face.*change|different.*face/i.test(activity.description) ? 'FACE_CHANGED' :
+                          /looking.*away|head.*pose/i.test(activity.description) ? 'LOOKING_AWAY' :
+                          null;
+                        
+                        return (
+                          <div key={activity.id} className="flex items-start space-x-3 p-3 bg-gray-50 rounded">
+                            <div className={`p-1 rounded ${getSeverityColor(activity.severity)}`}>
+                              {isFaceDetection ? <Camera className="h-4 w-4" /> : getActivityTypeIcon(activity.type)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium">
+                                {isFaceDetection && (
+                                  <span className="inline-flex items-center space-x-1 mr-2">
+                                    <Camera className="h-3 w-3" />
+                                    <span className="text-xs font-semibold text-blue-600">FACE DETECTION:</span>
+                                  </span>
+                                )}
+                                {activity.description}
+                              </p>
+                              <p className="text-xs text-gray-500">
+                                {formatTime(activity.timestamp)}
+                                {faceDetectionType && (
+                                  <span className="ml-2 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">
+                                    {faceDetectionType.replace(/_/g, ' ')}
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getSeverityColor(activity.severity)}`}>
+                              {activity.severity}
+                            </span>
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium">{activity.description}</p>
-                            <p className="text-xs text-gray-500">
-                              {formatTime(activity.timestamp)}
-                            </p>
-                          </div>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getSeverityColor(activity.severity)}`}>
-                            {activity.severity}
-                          </span>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
                     <p className="text-gray-500 text-center py-4">No violations detected</p>

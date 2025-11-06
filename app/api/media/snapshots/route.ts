@@ -5,6 +5,8 @@ import prisma from '@/app/lib/prisma';
 import { uploadFile, base64ToBuffer, validateFileSize, validateImageType, getFileUrl, STORAGE_PROVIDER, getLocalFileBuffer } from '@/app/lib/storage';
 import { z } from 'zod';
 import { validateRequest } from '@/app/lib/api/errors';
+import { analyzeFace, extractFaceDescriptor } from '@/app/lib/faceDetection';
+import { EventType, Severity } from '@prisma/client';
 
 const uploadSnapshotSchema = z.object({
   attemptId: z.string().cuid(),
@@ -144,7 +146,84 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Save snapshot record
+    // Get baseline face descriptor from attempt metadata (first snapshot)
+    const attemptWithMetadata = await prisma.attempt.findUnique({
+      where: { id: data.attemptId },
+      select: { metadata: true },
+    });
+
+    let baselineDescriptor: number[] | undefined;
+    if (attemptWithMetadata?.metadata && typeof attemptWithMetadata.metadata === 'object') {
+      const metadata = attemptWithMetadata.metadata as { baselineFaceDescriptor?: number[] };
+      baselineDescriptor = metadata.baselineFaceDescriptor;
+    }
+
+    // Run face detection analysis (only for WEBCAM snapshots)
+    let faceAnalysis = null;
+    let faceEmbedding: number[] | null = null;
+    const violations: Array<{ type: EventType; severity: Severity; description: string }> = [];
+
+    if (data.type === 'WEBCAM') {
+      try {
+        faceAnalysis = await analyzeFace(buffer, baselineDescriptor);
+        
+        // Extract face embedding if face detected
+        if (faceAnalysis.detection.hasFace && faceAnalysis.detection.faces.length > 0) {
+          faceEmbedding = extractFaceDescriptor(faceAnalysis.detection.faces[0]);
+          
+          // Store baseline face descriptor if this is the first snapshot with a face
+          if (!baselineDescriptor && faceEmbedding) {
+            await prisma.attempt.update({
+              where: { id: data.attemptId },
+              data: {
+                metadata: {
+                  baselineFaceDescriptor: faceEmbedding,
+                } as never,
+              },
+            });
+            baselineDescriptor = faceEmbedding;
+          }
+        }
+
+        // Process violations
+        for (const violation of faceAnalysis.violations) {
+          violations.push({
+            type: violation.type as EventType,
+            severity: violation.severity as Severity,
+            description: violation.description,
+          });
+
+          // Create monitoring event for each violation
+          try {
+            await prisma.monitoringEvent.create({
+              data: {
+                examId: attempt.examId,
+                attemptId: data.attemptId,
+                studentId: user.id,
+                type: violation.type as EventType,
+                severity: violation.severity as Severity,
+                description: violation.description,
+                metadata: {
+                  snapshotId: 'pending', // Will update after snapshot is created
+                  faceCount: faceAnalysis.detection.faceCount,
+                  confidence: faceAnalysis.detection.faces[0]?.detection.score || 0,
+                  headPose: faceAnalysis.headPose,
+                  faceMatch: faceAnalysis.faceMatch,
+                } as never,
+              },
+            });
+          } catch (eventError) {
+            console.error('[Snapshot] Failed to create monitoring event:', eventError);
+            // Non-fatal - continue
+          }
+        }
+      } catch (faceError) {
+        console.error('[Snapshot] Face detection error (non-fatal):', faceError);
+        // Non-fatal - continue with snapshot upload even if face detection fails
+      }
+    }
+
+    // Save snapshot record with face detection metadata
     const snapshot = await prisma.snapshot.create({
       data: {
         attemptId: data.attemptId,
@@ -155,11 +234,66 @@ export async function POST(request: NextRequest) {
         metadata: {
           ...(data.metadata || {}),
           contentType,
+          faceEmbedding: faceEmbedding || null,
+          faceCount: faceAnalysis?.detection.faceCount || 0,
+          hasFace: faceAnalysis?.detection.hasFace || false,
+          hasMultipleFaces: faceAnalysis?.detection.hasMultipleFaces || false,
+          headPose: faceAnalysis?.headPose || null,
+          faceMatch: faceAnalysis?.faceMatch || null,
+          violations: violations.length > 0 ? violations.map(v => ({
+            type: v.type,
+            severity: v.severity,
+            description: v.description,
+          })) : null,
         } as never,
       },
     });
 
-    return successResponse(snapshot, 201);
+    // Update monitoring events with snapshot ID (find recent events for this attempt)
+    if (violations.length > 0) {
+      try {
+        // Find events created in the last 5 seconds for this attempt (should be the ones we just created)
+        const recentEvents = await prisma.monitoringEvent.findMany({
+          where: {
+            attemptId: data.attemptId,
+            studentId: user.id,
+            createdAt: {
+              gte: new Date(Date.now() - 5000),
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: violations.length,
+        });
+
+        // Update each event with snapshot ID
+        for (const event of recentEvents) {
+          const currentMetadata = (event.metadata as any) || {};
+          await prisma.monitoringEvent.update({
+            where: { id: event.id },
+            data: {
+              metadata: {
+                ...currentMetadata,
+                snapshotId: snapshot.id,
+              } as never,
+            },
+          });
+        }
+      } catch (updateError) {
+        console.error('[Snapshot] Failed to update monitoring events:', updateError);
+      }
+    }
+
+    return successResponse({
+      ...snapshot,
+      faceAnalysis: faceAnalysis ? {
+        faceCount: faceAnalysis.detection.faceCount,
+        hasFace: faceAnalysis.detection.hasFace,
+        hasMultipleFaces: faceAnalysis.detection.hasMultipleFaces,
+        headPose: faceAnalysis.headPose,
+        faceMatch: faceAnalysis.faceMatch,
+        violations: violations,
+      } : null,
+    }, 201);
   } catch (error) {
     return errorHandler(error);
   }
