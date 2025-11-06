@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { errorHandler, successResponse, ApiError } from '@/app/lib/api/errors';
 import { requireStudent } from '@/app/lib/api/auth';
 import prisma from '@/app/lib/prisma';
+import { computePlagiarismForAttempt } from '@/app/lib/plagiarism';
 import { AttemptStatus } from '@prisma/client';
 
 interface AnswerSubmission {
@@ -79,6 +80,34 @@ export async function POST(
       };
     });
 
+    // Persist each answer (upsert) so teacher can view them later
+    for (const a of gradedAnswers) {
+      await prisma.answer.upsert({
+        where: {
+          attemptId_questionId: {
+            attemptId,
+            questionId: a.questionId,
+          },
+        },
+        create: {
+          attemptId,
+          questionId: a.questionId,
+          answer: a.answer as any,
+          isCorrect: a.isCorrect || null,
+          pointsAwarded: a.earnedPoints || null,
+          timeSpent: 0,
+          flaggedForReview: false,
+        },
+        update: {
+          answer: a.answer as any,
+          isCorrect: a.isCorrect || null,
+          pointsAwarded: a.earnedPoints || null,
+          timeSpent: 0,
+          flaggedForReview: false,
+        },
+      });
+    }
+
     // Update attempt
     await prisma.attempt.update({
       where: { id: attemptId },
@@ -89,8 +118,27 @@ export async function POST(
       },
     });
 
-    // Create submission
-    await prisma.submission.create({
+    // Compute plagiarism for short/essay answers (if any)
+    const shortQuestionIds = attempt.exam.examQuestions
+      .map((eq) => eq.question)
+      .filter((q) => q.type === 'SHORT_ANSWER' || q.type === 'ESSAY')
+      .map((q) => q.id);
+
+    let plagiarismPercent = 0;
+    let plagiarismDetails = null;
+    if (shortQuestionIds.length > 0) {
+      try {
+        const res = await computePlagiarismForAttempt(attemptId, attempt.examId, shortQuestionIds, user.id);
+        plagiarismPercent = res.plagiarismPercent;
+        plagiarismDetails = res.details;
+      } catch (err) {
+        // Non-fatal - log and continue
+        console.error('Plagiarism check failed:', err);
+      }
+    }
+
+    // Create submission (store plagiarism info)
+    await (prisma as any).submission.create({
       data: {
         attemptId,
         studentId: user.id,
@@ -98,6 +146,8 @@ export async function POST(
         totalPoints,
         gradedAt: new Date(),
         status: 'GRADED',
+        plagiarismPercent: plagiarismPercent || null,
+        plagiarismDetails: plagiarismDetails || null,
       },
     });
 

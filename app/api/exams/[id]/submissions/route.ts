@@ -4,6 +4,7 @@ import { requireAuth } from '@/app/lib/api/auth';
 import { submitExamSchema } from '@/app/lib/api/validation';
 import { validateRequest } from '@/app/lib/api/errors';
 import prisma from '@/app/lib/prisma';
+import { computePlagiarismForAttempt } from '@/app/lib/plagiarism';
 import { createAuditLog, AuditAction } from '@/app/lib/api/audit';
 
 interface RouteContext {
@@ -131,14 +132,34 @@ export async function POST(
       },
     });
 
-    // Create submission
-    const submission = await prisma.submission.create({
+    // Compute plagiarism for short/essay answers (if any)
+    const shortQuestionIds = attempt.exam.examQuestions
+      .map((eq) => eq.question)
+      .filter((q) => q.type === 'SHORT_ANSWER' || q.type === 'ESSAY')
+      .map((q) => q.id);
+
+    let plagiarismPercent = 0;
+    let plagiarismDetails = null;
+    if (shortQuestionIds.length > 0) {
+      try {
+        const res = await computePlagiarismForAttempt(data.attemptId, attempt.examId, shortQuestionIds, user.id);
+        plagiarismPercent = res.plagiarismPercent;
+        plagiarismDetails = res.details;
+      } catch (err) {
+        console.error('Plagiarism check failed:', err);
+      }
+    }
+
+    // Create submission (persist plagiarism info)
+    const submission = await (prisma as any).submission.create({
       data: {
         attemptId: data.attemptId,
         studentId: user.id,
         score: totalScore,
         totalPoints,
         status: totalPoints === totalScore ? 'GRADED' : 'PENDING',
+        plagiarismPercent: plagiarismPercent || null,
+        plagiarismDetails: plagiarismDetails || null,
       },
     });
 

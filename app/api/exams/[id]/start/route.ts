@@ -176,7 +176,8 @@ export async function GET(
         maxAttempts: exam.maxAttempts,
         questions: exam.examQuestions.map((eq) => ({
           id: eq.question.id,
-          type: eq.question.type.toLowerCase(),
+          // Normalize DB enum like "SHORT_ANSWER" -> "short-answer" to match frontend Question.type
+          type: eq.question.type.toLowerCase().replace(/_/g, '-'),
           question: eq.question.question,
           options: eq.question.options ? (eq.question.options as string[]) : undefined,
           points: eq.question.points,
@@ -214,7 +215,8 @@ export async function GET(
       maxAttempts: exam.maxAttempts,
       questions: exam.examQuestions.map((eq) => ({
         id: eq.question.id,
-        type: eq.question.type.toLowerCase(),
+        // Normalize DB enum like "SHORT_ANSWER" -> "short-answer" to match frontend Question.type
+        type: eq.question.type.toLowerCase().replace(/_/g, '-'),
         question: eq.question.question,
         options: eq.question.options ? (eq.question.options as string[]) : undefined,
         points: eq.question.points,

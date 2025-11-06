@@ -59,6 +59,15 @@ export const createExamSchema = z.object({
   }),
 });
 
+// Ensure we don't allow both webcam requirement and forced fullscreen together
+export const createExamSchemaWithChecks = createExamSchema.refine(
+  (val) => !(val.settings.requireWebcam && val.settings.enableFullscreenMode),
+  {
+    message: 'Cannot enable both webcam requirement and fullscreen mode at the same time',
+    path: ['settings'],
+  }
+);
+
 export const updateExamSchema = z.object({
   title: z.string().min(1).optional(),
   description: z.string().optional(),
@@ -81,6 +90,19 @@ export const updateExamSchema = z.object({
     enableFullscreenMode: z.boolean().optional(),
     disableDevTools: z.boolean().optional(),
   }).optional(),
+});
+
+// For partial updates, validate that provided settings don't enable both options
+export const updateExamSchemaWithChecks = updateExamSchema.superRefine((val, ctx) => {
+  if (val.settings) {
+    const s = val.settings as any;
+    if (s.requireWebcam === true && s.enableFullscreenMode === true) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Cannot enable both webcam requirement and fullscreen mode at the same time',
+      });
+    }
+  }
 });
 
 // Attempt schemas

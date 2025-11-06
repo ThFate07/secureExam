@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { formatTime } from "../lib/utils";
 import { Question } from "../types";
 
@@ -76,6 +76,13 @@ export function useAntiCheat({ onViolation, config = {} }: UseAntiCheatProps) {
     lockdownBrowser = false,
     enableFullscreenMode = false,
   } = config;
+
+  // persistent state for fullscreen monitoring (keeps timers/flags across rerenders)
+  const fullscreenStateRef = useRef<{
+    lastWarn: number;
+    retryTimeoutId: number | null;
+    warned: boolean;
+  }>({ lastWarn: 0, retryTimeoutId: null, warned: false });
 
   useEffect(() => {
     // If no features are enabled, don't set up any listeners
@@ -168,22 +175,78 @@ export function useAntiCheat({ onViolation, config = {} }: UseAntiCheatProps) {
 
       requestFullscreen();
 
-      // Monitor fullscreen exit
-      const handleFullscreenChange = () => {
-        if (!document.fullscreenElement) {
-          onViolation("Fullscreen mode exited");
+      // Monitor fullscreen exit with cooldown to avoid spiraling warnings.
+      // When fullscreen is exited, warn once and prompt the user. Then recheck after COOLDOWN_MS
+      // and warn again only if they're still not in fullscreen. We'll keep persistent state in a ref
+      // so re-renders won't reset our timers/flags.
+      const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
+      // use the fullscreenStateRef declared at hook top-level
+
+      const scheduleRetry = () => {
+        const state = fullscreenStateRef.current;
+        if (state.retryTimeoutId) {
+          clearTimeout(state.retryTimeoutId as any);
+          state.retryTimeoutId = null;
         }
+
+        state.retryTimeoutId = window.setTimeout(() => {
+          state.retryTimeoutId = null;
+          if (!document.fullscreenElement) {
+            state.lastWarn = Date.now();
+            onViolation("You are still not in fullscreen. Please re-enter fullscreen to avoid being flagged.");
+            // keep scheduling until user goes fullscreen
+            scheduleRetry();
+          } else {
+            // user entered fullscreen during the wait
+            state.warned = false;
+            state.lastWarn = 0;
+          }
+        }, COOLDOWN_MS) as unknown as number;
+      };
+
+      const handleFullscreenChange = () => {
+        const state = fullscreenStateRef.current;
+
+        if (document.fullscreenElement) {
+          // Re-entered fullscreen — clear any pending retry and reset state so future exits can warn again
+          if (state.retryTimeoutId) {
+            clearTimeout(state.retryTimeoutId as any);
+            state.retryTimeoutId = null;
+          }
+          state.lastWarn = 0;
+          state.warned = false;
+          return;
+        }
+
+        const now = Date.now();
+        // If we warned recently and within cooldown, don't warn again
+        if (state.warned && now - state.lastWarn < COOLDOWN_MS) {
+          return;
+        }
+
+        // Show one prompt and mark warned; then schedule periodic rechecks every COOLDOWN_MS until user re-enters fullscreen
+        state.warned = true;
+        state.lastWarn = now;
+        onViolation("Fullscreen mode exited — please re-enter fullscreen mode to continue the exam");
+        scheduleRetry();
       };
 
       document.addEventListener("fullscreenchange", handleFullscreenChange);
 
       handlers.push(() => {
         document.removeEventListener("fullscreenchange", handleFullscreenChange);
-        
         // Exit fullscreen on cleanup
         if (document.fullscreenElement) {
           document.exitFullscreen().catch(console.error);
         }
+        const state = fullscreenStateRef.current;
+        if (state.retryTimeoutId) {
+          clearTimeout(state.retryTimeoutId as any);
+          state.retryTimeoutId = null;
+        }
+        state.warned = false;
+        state.lastWarn = 0;
       });
     }
 
@@ -210,9 +273,26 @@ interface UseWebcamProps {
 }
 
 export function useWebcam({ enabled = false, onError }: UseWebcamProps) {
+ 
+  // Keep a ref to the stream so that stopping the stream doesn't change
+  // the identity of callbacks and trigger effects unintentionally.
   const [stream, setStream] = useState<MediaStream | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const mountedRef = useRef(true);
   const [isActive, setIsActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
 
   const startWebcam = useCallback(async () => {
     if (!enabled) return;
@@ -222,27 +302,39 @@ export function useWebcam({ enabled = false, onError }: UseWebcamProps) {
         video: { width: 640, height: 480 },
         audio: false,
       });
-      
-      setStream(mediaStream);
-      setIsActive(true);
-      setError(null);
-    } catch {
+
+      // store on ref first, then update state if still mounted
+      streamRef.current = mediaStream;
+      if (mountedRef.current) {
+        setStream(mediaStream);
+        setIsActive(true);
+        setError(null);
+      } else {
+        // If unmounted already, stop tracks
+        mediaStream.getTracks().forEach(t => t.stop());
+      }
+    } catch (err) {
       const errorMessage = "Failed to access webcam. Please ensure camera permissions are granted.";
       setError(errorMessage);
-      onError?.(errorMessage);
+      onErrorRef.current?.(errorMessage);
     }
-  }, [enabled, onError]);
+  }, [enabled]);
 
   const stopWebcam = useCallback(() => {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
+    const s = streamRef.current;
+    if (s) {
+      s.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (mountedRef.current) {
       setStream(null);
       setIsActive(false);
     }
-  }, [stream]);
+  }, []);
 
   const captureSnapshot = useCallback(async (): Promise<string | null> => {
-    if (!stream || !isActive) return null;
+    const s = streamRef.current;
+    if (!s || !isActive) return null;
 
     const video = document.createElement('video');
     const canvas = document.createElement('canvas');
@@ -250,8 +342,9 @@ export function useWebcam({ enabled = false, onError }: UseWebcamProps) {
 
     if (!context) return null;
 
-    video.srcObject = stream;
-    video.play();
+    video.srcObject = s;
+    // autoplay may be blocked in some browsers, but for snapshot we only need metadata
+    await video.play().catch(() => {});
 
     return await new Promise<string | null>((resolve) => {
       video.addEventListener('loadedmetadata', () => {
@@ -261,7 +354,7 @@ export function useWebcam({ enabled = false, onError }: UseWebcamProps) {
         resolve(canvas.toDataURL('image/jpeg', 0.8));
       });
     });
-  }, [stream, isActive]);
+  }, [isActive]);
 
   useEffect(() => {
     if (enabled) {
@@ -271,6 +364,7 @@ export function useWebcam({ enabled = false, onError }: UseWebcamProps) {
     return () => {
       stopWebcam();
     };
+    // startWebcam may change if onError changes, stopWebcam is stable
   }, [enabled, startWebcam, stopWebcam]);
 
   return {

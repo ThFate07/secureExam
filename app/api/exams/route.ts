@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { errorHandler, successResponse } from '@/app/lib/api/errors';
 import { requireAuth, requireTeacher } from '@/app/lib/api/auth';
-import { createExamSchema } from '@/app/lib/api/validation';
+import { createExamSchemaWithChecks as createExamSchema } from '@/app/lib/api/validation';
 import { validateRequest } from '@/app/lib/api/errors';
 import prisma from '@/app/lib/prisma';
 import { createAuditLog, AuditAction } from '@/app/lib/api/audit';

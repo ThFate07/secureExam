@@ -44,6 +44,8 @@ export default function TeacherMonitoringDashboard() {
   const [isConnected, setIsConnected] = useState(false);
   const [showTerminateConfirm, setShowTerminateConfirm] = useState(false);
   const [terminationReason, setTerminationReason] = useState("");
+  const [latestSnapshot, setLatestSnapshot] = useState<{ id: string; url: string; capturedAt: Date } | null>(null);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
 
   const handleIncomingEvent = useCallback((event: MonitoringEvent) => {
     if (!event || !event.type || !event.payload) {
@@ -268,6 +270,85 @@ export default function TeacherMonitoringDashboard() {
 
   const [studentNames, setStudentNames] = useState<Record<string, string>>({});
   const [examTotals, setExamTotals] = useState<Record<string, number>>({});
+  const selectedKey = selectedStudent ? `${selectedStudent.examId}:${selectedStudent.studentId}` : null;
+
+  useEffect(() => {
+    if (!selectedStudent) return;
+    const updated = activeStudents.find(
+      (s) => s.studentId === selectedStudent.studentId && s.examId === selectedStudent.examId,
+    );
+    if (!updated) {
+      setSelectedStudent(null);
+      return;
+    }
+    if (updated !== selectedStudent) {
+      setSelectedStudent(updated);
+    }
+  }, [activeStudents, selectedStudent]);
+
+  useEffect(() => {
+    setLatestSnapshot(null);
+    setSnapshotError(null);
+  }, [selectedKey]);
+
+  useEffect(() => {
+    if (!selectedStudent || !selectedStudent.webcamEnabled) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchLatestSnapshot = async () => {
+      try {
+        const params = new URLSearchParams({
+          examId: selectedStudent.examId,
+          studentId: selectedStudent.studentId,
+          _: Date.now().toString(),
+        });
+
+        const response = await fetch(`/api/media/snapshots?${params.toString()}`, {
+          cache: 'no-store',
+          credentials: 'include',
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const payload = await response.json();
+        if (cancelled) return;
+
+        if (payload?.success) {
+          if (payload.data) {
+            const capturedAt = payload.data.capturedAt ? new Date(payload.data.capturedAt) : new Date();
+            const displayUrl: string = payload.data.inlineData ?? payload.data.signedUrl ?? payload.data.url;
+            setLatestSnapshot((prev) => {
+              if (prev?.id === payload.data.id && prev?.url === displayUrl) {
+                return prev;
+              }
+              return { id: payload.data.id, url: displayUrl, capturedAt };
+            });
+            setSnapshotError(null);
+          } else {
+            setSnapshotError((prev) => prev ?? 'No snapshots received yet');
+          }
+        } else {
+          throw new Error(payload?.error || 'Failed to load snapshot');
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setSnapshotError('Failed to load snapshot');
+      }
+    };
+
+    fetchLatestSnapshot();
+    const intervalId = setInterval(fetchLatestSnapshot, 15_000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [selectedStudent, selectedKey]);
 
   // Fetch student names when needed
   useEffect(() => {
@@ -615,7 +696,7 @@ export default function TeacherMonitoringDashboard() {
               </Card>
 
               {/* Webcam Feed */}
-              {selectedStudent.webcamEnabled && (
+              {/* {selectedStudent.webcamEnabled && (
                 <Card>
                   <CardHeader>
                     <CardTitle className="flex items-center space-x-2">
@@ -624,15 +705,30 @@ export default function TeacherMonitoringDashboard() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="aspect-video bg-gray-100 rounded border flex items-center justify-center">
-                      <div className="text-center text-gray-500">
-                        <Camera className="h-8 w-8 mx-auto mb-2" />
-                        <p className="text-sm">Live webcam feed would appear here</p>
-                      </div>
+                    <div className="aspect-video bg-gray-100 rounded border overflow-hidden flex items-center justify-center">
+                      {latestSnapshot ? (
+                        <img
+                          src={latestSnapshot.url}
+                          alt={`Latest snapshot of ${getStudentName(selectedStudent.studentId)}`}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className={`text-center px-4 ${snapshotError && snapshotError !== 'No snapshots received yet' ? 'text-red-600' : 'text-gray-500'}`}>
+                          <Camera className="h-8 w-8 mx-auto mb-2" />
+                          <p className="text-sm">
+                            {snapshotError ?? 'Waiting for first snapshot...'}
+                          </p>
+                        </div>
+                      )}
                     </div>
+                    {latestSnapshot && (
+                      <p className="text-xs text-gray-500 mt-2">
+                        Last captured {formatTime(latestSnapshot.capturedAt)}
+                      </p>
+                    )}
                   </CardContent>
                 </Card>
-              )}
+              )} */}
 
               {/* Flagged Activities */}
               <Card>

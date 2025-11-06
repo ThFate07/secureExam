@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "../../hooks/useAuth";
 import { useExamTimer, useAntiCheat, useWebcam, useExamSession } from "../../hooks/useExam";
@@ -230,6 +230,19 @@ export default function ExamInterface() {
   }, [examSessionData.currentQuestionIndex, exam, user]);
 
   // Heartbeat (activity ping)
+  // Heartbeat (activity ping)
+  // Use refs for frequently changing values so the interval isn't restarted
+  // every time the current question or webcam status changes.
+  const currentQuestionIndexRef = useRef(examSessionData.currentQuestionIndex);
+  useEffect(() => {
+    currentQuestionIndexRef.current = examSessionData.currentQuestionIndex;
+  }, [examSessionData.currentQuestionIndex]);
+
+  const webcamActiveRef = useRef(webcam.isActive);
+  useEffect(() => {
+    webcamActiveRef.current = webcam.isActive;
+  }, [webcam.isActive]);
+
   useEffect(() => {
     if (!exam || !user) return;
     console.log('[Exam] Starting heartbeat for student:', user.id, 'exam:', exam.id);
@@ -239,8 +252,8 @@ export default function ExamInterface() {
         payload: {
           studentId: user.id,
           examId: exam.id,
-          questionIndex: examSessionData.currentQuestionIndex,
-          webcamActive: webcam.isActive,
+          questionIndex: currentQuestionIndexRef.current,
+          webcamActive: webcamActiveRef.current,
           timestamp: Date.now(),
         },
       };
@@ -251,7 +264,7 @@ export default function ExamInterface() {
       console.log('[Exam] Stopping heartbeat');
       clearInterval(interval);
     };
-  }, [exam, user, examSessionData.currentQuestionIndex, webcam.isActive]);
+  }, [exam, user]);
 
   // Webcam status change
   useEffect(() => {
@@ -266,6 +279,52 @@ export default function ExamInterface() {
       },
     });
   }, [webcam.isActive, exam, user]);
+
+  // Periodically capture and upload webcam snapshots while webcam is active.
+  useEffect(() => {
+    if (!exam || !user) return;
+    if (!attemptId) return; // need attempt to attribute snapshot
+
+    let stopped = false;
+    let uploading = false;
+
+    const uploadSnapshot = async () => {
+      if (stopped || uploading) return;
+      if (!webcam.isActive) return;
+      uploading = true;
+      try {
+        const dataUrl = await webcam.captureSnapshot();
+        if (!dataUrl) return;
+
+        // POST JSON payload expected by the API route
+        const res = await fetch('/api/media/snapshots', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ attemptId, image: dataUrl, type: 'WEBCAM' }),
+          credentials: 'include',
+        });
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          handleViolation(`Snapshot upload failed: ${res.status} ${res.statusText} ${text}`);
+        }
+      } catch (err: any) {
+        handleViolation(`Snapshot upload error: ${err?.message || String(err)}`);
+      } finally {
+        uploading = false;
+      }
+    };
+
+    // Take an immediate snapshot, then every 15s while active
+    const immediate = setTimeout(() => uploadSnapshot(), 1000);
+    const interval = setInterval(() => uploadSnapshot(), 15_000);
+
+    return () => {
+      stopped = true;
+      clearTimeout(immediate);
+      clearInterval(interval);
+    };
+  }, [webcam, attemptId, exam, user]);
 
   // Restore persisted violations history for this attempt on reload
   useEffect(() => {

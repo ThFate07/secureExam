@@ -16,6 +16,7 @@ interface ExamSubmission {
   score: number;
   totalQuestions: number;
   percentage: number;
+  plagiarismPercent?: number | null;
   completedAt: string;
   timeSpent: number;
 }
@@ -25,6 +26,7 @@ export default function ExamSubmissionsPage() {
   const router = useRouter();
   const examId = params.id as string;
   const { currentExam } = useExamStore(examId);
+  const [exam, setExam] = useState<any | null>(null);
   const [search, setSearch] = useState('');
   const [minPercent, setMinPercent] = useState('');
   const [maxPercent, setMaxPercent] = useState('');
@@ -49,6 +51,26 @@ export default function ExamSubmissionsPage() {
       fetchSubmissions();
     }
   }, [examId]);
+
+  // If the local exam store doesn't have the exam (e.g., direct navigation or refresh), fetch it from API
+  useEffect(() => {
+    const loadExam = async () => {
+      if (currentExam) {
+        setExam(currentExam);
+        return;
+      }
+
+      try {
+        const remote = await api.exams.get(examId);
+        setExam(remote);
+      } catch (err) {
+        console.error('Failed to load exam details:', err);
+        setExam(null);
+      }
+    };
+
+    if (examId) loadExam();
+  }, [examId, currentExam]);
 
   const results = useMemo(() => submissions, [submissions]);
 
@@ -85,7 +107,9 @@ export default function ExamSubmissionsPage() {
     );
   }
 
-  if (!currentExam) {
+  const effectiveExam = currentExam || exam;
+
+  if (!effectiveExam) {
     return (
       <div className="p-8 max-w-4xl mx-auto">
         <Button variant="outline" onClick={() => router.push('/dashboard/teacher')} className="mb-4"><ArrowLeft className="h-4 w-4 mr-2" />Back</Button>
@@ -99,7 +123,7 @@ export default function ExamSubmissionsPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Button variant="outline" onClick={() => router.back()}><ArrowLeft className="h-4 w-4 mr-2" />Back</Button>
-          <h1 className="text-2xl font-bold">Submissions - {currentExam.title}</h1>
+          <h1 className="text-2xl font-bold">Submissions - {effectiveExam.title}</h1>
         </div>
         <Button onClick={exportCSV}><FileDown className="h-4 w-4 mr-2" />Export CSV</Button>
       </div>
@@ -180,6 +204,12 @@ export default function ExamSubmissionsPage() {
                 <Badge className={r.percentage >= 70 ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}>
                   <Percent className="h-3 w-3 mr-1" />{r.percentage}%
                 </Badge>
+                {typeof r.plagiarismPercent === 'number' && (
+                  <Badge className={r.plagiarismPercent >= 50 ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}>
+                    Plagiarism: {r.plagiarismPercent}%
+                  </Badge>
+                )}
+                <Button variant="ghost" onClick={() => router.push(`/dashboard/teacher/exam/${examId}/submissions/${r.id}`)}>View</Button>
               </div>
             </div>
           ))}

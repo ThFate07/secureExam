@@ -223,6 +223,10 @@ model Submission {
   status        SubmissionStatus @default(PENDING)
   flagged       Boolean   @default(false)
   flagReason    String?
+  // Plagiarism percentage (0-100) computed when submission is created
+  plagiarismPercent Float?
+  // Optional details about plagiarism check (e.g., matched attempt ids, ngram stats)
+  plagiarismDetails Json?
   
   // Relations
   attempt       Attempt   @relation(fields: [attemptId], references: [id], onDelete: Cascade)

@@ -1,10 +1,10 @@
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { writeFile, mkdir } from 'fs/promises';
+import { writeFile, mkdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import { randomBytes } from 'crypto';
 
-const STORAGE_PROVIDER = process.env.STORAGE_PROVIDER || 'local';
+export const STORAGE_PROVIDER = process.env.STORAGE_PROVIDER || 'local';
 
 // S3 Client (for AWS S3 or compatible storage)
 const s3Client = new S3Client({
@@ -35,13 +35,14 @@ export interface UploadResult {
 function generateFilename(originalFilename: string): string {
   const timestamp = Date.now();
   const random = randomBytes(8).toString('hex');
-  const ext = originalFilename.split('.').pop();
-  return `snapshots/${timestamp}-${random}.${ext}`;
+  const ext = originalFilename.split('.').pop() || 'jpg';
+  return `${timestamp}-${random}.${ext}`;
 }
 
 // Upload to S3
 export async function uploadToS3(options: UploadOptions): Promise<UploadResult> {
-  const key = generateFilename(options.filename);
+  const filename = generateFilename(options.filename);
+  const key = `snapshots/${filename}`;
 
   const command = new PutObjectCommand({
     Bucket: BUCKET_NAME,
@@ -84,11 +85,12 @@ export async function uploadToLocal(options: UploadOptions): Promise<UploadResul
 
   await writeFile(filepath, options.buffer);
 
-  const url = `/uploads/snapshots/${filename}`;
+  const relativePath = `snapshots/${filename}`;
+  const url = `/uploads/${relativePath}`;
 
   return {
     url,
-    key: filename,
+    key: relativePath,
     size: options.buffer.length,
   };
 }
@@ -111,7 +113,19 @@ export async function getFileUrl(key: string): Promise<string> {
       return getSignedUrlForS3(key);
     case 'local':
     default:
-      return `/uploads/snapshots/${key}`;
+      return `/uploads/${key.replace(/^\/+/, '')}`;
+  }
+}
+
+export async function getLocalFileBuffer(key: string): Promise<Buffer | null> {
+  if (STORAGE_PROVIDER !== 'local') {
+    return null;
+  }
+  try {
+    const filePath = join(process.cwd(), 'uploads', key);
+    return await readFile(filePath);
+  } catch {
+    return null;
   }
 }
 

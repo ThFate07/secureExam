@@ -14,10 +14,23 @@ interface SecuritySettingsProps {
 
 const SecuritySettings: React.FC<SecuritySettingsProps> = ({ settings, onChange }) => {
   const updateSetting = <K extends keyof ExamSecuritySettings>(key: K, value: ExamSecuritySettings[K]) => {
-    onChange({
+    // Prevent enabling webcam and fullscreen together — make them mutually exclusive
+    const nextSettings: ExamSecuritySettings = {
       ...settings,
       [key]: value,
-    });
+    } as ExamSecuritySettings;
+
+    if (key === 'requireWebcam' && value === true && settings.enableFullscreenMode) {
+      // If webcam is being enabled while fullscreen is active, disable fullscreen
+      nextSettings.enableFullscreenMode = false;
+    }
+
+    if (key === 'enableFullscreenMode' && value === true && settings.requireWebcam) {
+      // If fullscreen is being enabled while webcam is active, disable webcam
+      nextSettings.requireWebcam = false;
+    }
+
+    onChange(nextSettings);
   };
 
   return (
