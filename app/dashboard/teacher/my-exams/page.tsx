@@ -342,15 +342,23 @@ const MyExamsPage = () => {
                             <Eye className="h-4 w-4 mr-3 text-gray-500" />
                             Preview (Student)
                           </button>
-                          {exam.status !== 'DRAFT' && (
-                            <button 
-                              className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
-                              onClick={() => { setOpenMenuId(null); router.push(`/dashboard/teacher/exam/${exam.id}/submissions`); }}
-                            >
-                              <FileText className="h-4 w-4 mr-3 text-gray-500" />
-                              Results
-                            </button>
-                          )}
+                          <button 
+                            className={`w-full text-left px-4 py-2 text-sm flex items-center transition-colors ${
+                              exam.status === 'DRAFT' 
+                                ? 'text-gray-400 cursor-not-allowed' 
+                                : 'text-gray-700 hover:bg-gray-100'
+                            }`}
+                            onClick={() => { 
+                              if (exam.status !== 'DRAFT') {
+                                setOpenMenuId(null); 
+                                router.push(`/dashboard/teacher/exam/${exam.id}/submissions`);
+                              }
+                            }}
+                            disabled={exam.status === 'DRAFT'}
+                          >
+                            <FileText className="h-4 w-4 mr-3 text-gray-500" />
+                            Results {exam.status === 'DRAFT' ? '(Publish First)' : ''}
+                          </button>
                           <div className="border-t border-gray-200 my-1"></div>
                           <button 
                             className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center transition-colors"
@@ -374,10 +382,20 @@ const MyExamsPage = () => {
                   </div>
                   <div className="pt-3 border-t">
                     <div className="flex space-x-2">
-                      {exam.status !== 'DRAFT' && (
-                        <Button size="sm" variant="outline" onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}/submissions`)} className="flex-1"><FileText className="h-4 w-4 mr-1" />Results</Button>
-                      )}
-                      <Button size="sm" onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}`)} className={exam.status === 'DRAFT' ? 'flex-1 w-full' : 'flex-1'}><Edit className="h-4 w-4 mr-1" />Edit</Button>
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}/submissions`)}
+                        className="flex-1"
+                        disabled={exam.status === 'DRAFT'}
+                      >
+                        <FileText className="h-4 w-4 mr-1" />
+                        {exam.status === 'DRAFT' ? 'Results (Publish First)' : 'Results'}
+                      </Button>
+                      <Button size="sm" onClick={() => router.push(`/dashboard/teacher/exam/${exam.id}`)} className="flex-1">
+                        <Edit className="h-4 w-4 mr-1" />
+                        Edit
+                      </Button>
                     </div>
                   </div>
                 </CardContent>

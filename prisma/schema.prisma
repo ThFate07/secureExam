@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -54,11 +54,11 @@ model Question {
   id            String    @id @default(cuid())
   title         String
   type          QuestionType
-  question      String    @db.Text
+  question      String
   options       Json?     // Array of strings for MCQ
   correctAnswer String?   // JSON: could be number (index), string, or array
   points        Int       @default(1)
-  tags          String[]
+  tags          Json?     // Array of strings stored as JSON
   subject       String?
   difficulty    String?   @default("medium")
   metadata      Json?
@@ -86,7 +86,7 @@ enum QuestionType {
 model Exam {
   id            String    @id @default(cuid())
   title         String
-  description   String?   @db.Text
+  description   String?
   duration      Int       // in minutes
   startTime     DateTime?
   endTime       DateTime?
@@ -219,7 +219,7 @@ model Submission {
   gradedById    String?
   score         Float?
   totalPoints   Float?
-  feedback      String?   @db.Text
+  feedback      String?
   status        SubmissionStatus @default(PENDING)
   flagged       Boolean   @default(false)
   flagReason    String?
@@ -249,7 +249,7 @@ model MonitoringEvent {
   attemptId     String?
   type          EventType
   severity      Severity  @default(LOW)
-  description   String    @db.Text
+  description   String
   metadata      Json?     // Additional context
   timestamp     DateTime  @default(now())
   
@@ -323,7 +323,7 @@ model Message {
   examId        String
   fromUserId    String
   toUserId      String?   // null means broadcast to all
-  body          String    @db.Text
+  body          String
   read          Boolean   @default(false)
   createdAt     DateTime  @default(now())
   

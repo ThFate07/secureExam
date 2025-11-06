@@ -24,6 +24,7 @@ export interface ExamSecuritySettings {
   allowReview: boolean;
   maxTabSwitchWarnings: number;
   enableFullscreenMode: boolean;
+  maxIntentionalViolations: number; // Maximum intentional violations before exam termination (default: 3)
 }
 
 export interface StoredExam {
@@ -112,6 +113,7 @@ export function createExam(partial: Partial<StoredExam>): StoredExam {
     allowReview: true,
     maxTabSwitchWarnings: 3,
     enableFullscreenMode: false,
+    maxIntentionalViolations: 3,
   };
   const created: StoredExam = {
     id: partial.id ?? `exam_${Math.random().toString(36).slice(2, 8)}`,

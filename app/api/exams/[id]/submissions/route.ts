@@ -17,7 +17,8 @@ export async function POST(
 ) {
   try {
     const user = await requireAuth(request);
-    const { id: examId } = await context.params;
+    const params = await context.params;
+    const { id: examId } = params;
     const data = await validateRequest(request, submitExamSchema);
 
     if (user.role !== 'STUDENT') {
@@ -183,7 +184,8 @@ export async function GET(
 ) {
   try {
     const user = await requireAuth(request);
-    const { id: examId } = await context.params;
+    const params = await context.params;
+    const { id: examId } = params;
 
     // Check if exam exists and user owns it
     const exam = await prisma.exam.findUnique({

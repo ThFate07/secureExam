@@ -8,7 +8,7 @@ import { Input } from '../../../../components/ui/input';
 import { Label } from '../../../../components/ui/label';
 import { Badge } from '../../../../components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../../../components/ui/dialog';
-import { ArrowLeft, Save, Plus, Trash2, Upload, UserPlus, Users, Search, CheckCircle, GraduationCap } from 'lucide-react';
+import { ArrowLeft, Save, Plus, Trash2, Upload, UserPlus, Users, Search, CheckCircle, GraduationCap, FileText } from 'lucide-react';
 import { api } from '../../../../lib/api/client';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../../components/ui/select';
 
@@ -367,16 +367,21 @@ export default function ExamDetailPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {exam.status !== 'DRAFT' && (
-            <Button 
-              variant="outline" 
-              size="sm"
-              onClick={() => router.push(`/dashboard/teacher/exam/${examId}/submissions`)}
-              className="text-sm"
-            >
-              View Submissions
-            </Button>
-          )}
+          <Button 
+            variant={exam.status === 'DRAFT' ? 'outline' : 'default'}
+            size="sm"
+            onClick={() => {
+              if (exam.status === 'DRAFT') {
+                alert('Please publish the exam first to view results.');
+              } else {
+                router.push(`/dashboard/teacher/exam/${examId}/submissions`);
+              }
+            }}
+            className={exam.status === 'DRAFT' ? 'text-sm' : 'bg-blue-600 hover:bg-blue-700 text-sm'}
+          >
+            <FileText className="h-4 w-4 mr-1" />
+            {exam.status === 'DRAFT' ? 'Results (Publish First)' : 'View Results'}
+          </Button>
           <Button 
             variant="destructive" 
             size="sm"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { formatTime } from "../lib/utils";
 import { Question } from "../types";
 
@@ -213,9 +213,28 @@ export function useWebcam({ enabled = false, onError }: UseWebcamProps) {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [isActive, setIsActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const onErrorRef = useRef(onError);
+  const enabledRef = useRef(enabled);
+
+  // Keep refs in sync
+  useEffect(() => {
+    onErrorRef.current = onError;
+    enabledRef.current = enabled;
+  }, [onError, enabled]);
+
+  // Keep stream ref in sync with state
+  useEffect(() => {
+    streamRef.current = stream;
+  }, [stream]);
 
   const startWebcam = useCallback(async () => {
-    if (!enabled) return;
+    if (!enabledRef.current) return;
+    
+    // Prevent starting if already active
+    if (streamRef.current) {
+      return;
+    }
 
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -223,26 +242,28 @@ export function useWebcam({ enabled = false, onError }: UseWebcamProps) {
         audio: false,
       });
       
+      streamRef.current = mediaStream;
       setStream(mediaStream);
       setIsActive(true);
       setError(null);
-    } catch {
+    } catch (err) {
       const errorMessage = "Failed to access webcam. Please ensure camera permissions are granted.";
       setError(errorMessage);
-      onError?.(errorMessage);
+      onErrorRef.current?.(errorMessage);
     }
-  }, [enabled, onError]);
+  }, []);
 
   const stopWebcam = useCallback(() => {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
       setStream(null);
       setIsActive(false);
     }
-  }, [stream]);
+  }, []);
 
   const captureSnapshot = useCallback(async (): Promise<string | null> => {
-    if (!stream || !isActive) return null;
+    if (!streamRef.current || !isActive) return null;
 
     const video = document.createElement('video');
     const canvas = document.createElement('canvas');
@@ -250,7 +271,7 @@ export function useWebcam({ enabled = false, onError }: UseWebcamProps) {
 
     if (!context) return null;
 
-    video.srcObject = stream;
+    video.srcObject = streamRef.current;
     video.play();
 
     return await new Promise<string | null>((resolve) => {
@@ -260,18 +281,38 @@ export function useWebcam({ enabled = false, onError }: UseWebcamProps) {
         context.drawImage(video, 0, 0);
         resolve(canvas.toDataURL('image/jpeg', 0.8));
       });
+      
+      // Timeout fallback
+      setTimeout(() => resolve(null), 5000);
     });
-  }, [stream, isActive]);
+  }, [isActive]);
 
   useEffect(() => {
-    if (enabled) {
-      startWebcam();
+    let isMounted = true;
+
+    if (enabled && !streamRef.current) {
+      startWebcam().then(() => {
+        // Camera started successfully
+      }).catch(() => {
+        // Already handled in startWebcam
+      });
+    } else if (!enabled && streamRef.current) {
+      stopWebcam();
     }
 
     return () => {
-      stopWebcam();
+      isMounted = false;
+      // Cleanup on unmount or when enabled changes to false
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+        if (isMounted) {
+          setStream(null);
+          setIsActive(false);
+        }
+      }
     };
-  }, [enabled, startWebcam, stopWebcam]);
+  }, [enabled]); // Only depend on enabled
 
   return {
     stream,

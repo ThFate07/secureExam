@@ -1,59 +1,95 @@
 "use client";
 
 import { useParams, useRouter } from 'next/navigation';
-import { useExamStore } from '../../../../../hooks/useExamStore';
 import { useMemo, useState, useEffect } from 'react';
 import { Button } from '../../../../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../../../components/ui/card';
 import { Input } from '../../../../../components/ui/input';
 import { Badge } from '../../../../../components/ui/badge';
-import { ArrowLeft, FileDown, Filter, Search, BarChart3, Users, Clock, Percent } from 'lucide-react';
+import { ArrowLeft, FileDown, Filter, Search, BarChart3, Users, Clock, Percent, FileText } from 'lucide-react';
 import { api } from '../../../../../lib/api/client';
 
 interface ExamSubmission {
   id: string;
   studentId: string;
-  score: number;
-  totalQuestions: number;
-  percentage: number;
-  completedAt: string;
-  timeSpent: number;
+  score: number | null;
+  totalPoints: number | null;
+  status: string;
+  submittedAt: string;
+  attempt: {
+    timeSpent: number | null;
+  };
+  student: {
+    id: string;
+    name: string;
+    email: string;
+  };
+}
+
+interface Exam {
+  id: string;
+  title: string;
+  description?: string;
 }
 
 export default function ExamSubmissionsPage() {
   const params = useParams();
   const router = useRouter();
   const examId = params.id as string;
-  const { currentExam } = useExamStore(examId);
+  const [exam, setExam] = useState<Exam | null>(null);
   const [search, setSearch] = useState('');
   const [minPercent, setMinPercent] = useState('');
   const [maxPercent, setMaxPercent] = useState('');
   const [submissions, setSubmissions] = useState<ExamSubmission[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Fetch submissions from API
+  // Fetch exam and submissions from API
   useEffect(() => {
-    const fetchSubmissions = async () => {
+    const fetchData = async () => {
       try {
         setLoading(true);
-        const data = await api.exams.submissions(examId);
-        setSubmissions(data.submissions || []);
+        // Fetch exam data
+        const examData = await api.exams.get(examId);
+        setExam(examData);
+        
+        // Fetch submissions
+        const submissionsData = await api.exams.submissions(examId);
+        setSubmissions(submissionsData.submissions || []);
       } catch (error) {
-        console.error('Failed to fetch submissions:', error);
+        console.error('Failed to fetch data:', error);
       } finally {
         setLoading(false);
       }
     };
 
     if (examId) {
-      fetchSubmissions();
+      fetchData();
     }
   }, [examId]);
 
-  const results = useMemo(() => submissions, [submissions]);
+  const results = useMemo(() => {
+    return submissions.map(s => {
+      const totalPoints = s.totalPoints || 0;
+      const score = s.score || 0;
+      const percentage = totalPoints > 0 ? (score / totalPoints) * 100 : 0;
+      return {
+        ...s,
+        percentage,
+        totalQuestions: totalPoints, // For backward compatibility
+        completedAt: s.submittedAt,
+        timeSpent: s.attempt?.timeSpent ? Math.floor(s.attempt.timeSpent / 60) : 0,
+      };
+    });
+  }, [submissions]);
 
   const filtered = results.filter(r => {
-    const matchesSearch = !search || r.studentId.toLowerCase().includes(search.toLowerCase());
+    const studentName = r.student?.name?.toLowerCase() || '';
+    const studentEmail = r.student?.email?.toLowerCase() || '';
+    const searchLower = search.toLowerCase();
+    const matchesSearch = !search || 
+      studentName.includes(searchLower) || 
+      studentEmail.includes(searchLower) ||
+      r.studentId.toLowerCase().includes(searchLower);
     const matchesMin = !minPercent || r.percentage >= Number(minPercent);
     const matchesMax = !maxPercent || r.percentage <= Number(maxPercent);
     return matchesSearch && matchesMin && matchesMax;
@@ -85,7 +121,7 @@ export default function ExamSubmissionsPage() {
     );
   }
 
-  if (!currentExam) {
+  if (!exam && !loading) {
     return (
       <div className="p-8 max-w-4xl mx-auto">
         <Button variant="outline" onClick={() => router.push('/dashboard/teacher')} className="mb-4"><ArrowLeft className="h-4 w-4 mr-2" />Back</Button>
@@ -99,7 +135,7 @@ export default function ExamSubmissionsPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Button variant="outline" onClick={() => router.back()}><ArrowLeft className="h-4 w-4 mr-2" />Back</Button>
-          <h1 className="text-2xl font-bold">Submissions - {currentExam.title}</h1>
+          <h1 className="text-2xl font-bold">Submissions - {exam?.title || 'Loading...'}</h1>
         </div>
         <Button onClick={exportCSV}><FileDown className="h-4 w-4 mr-2" />Export CSV</Button>
       </div>
@@ -170,16 +206,30 @@ export default function ExamSubmissionsPage() {
           {filtered.length === 0 && <p className="text-sm text-gray-600">No submissions match your filters.</p>}
           {filtered.map(r => (
             <div key={r.id} className="border rounded-lg p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-              <div className="space-y-1 text-sm">
-                <p><span className="font-medium">Student:</span> {r.studentId}</p>
+              <div className="space-y-1 text-sm flex-1">
+                <p><span className="font-medium">Student:</span> {r.student?.name || r.studentId}</p>
+                <p className="text-xs text-gray-500">{r.student?.email || r.studentId}</p>
                 <p><span className="font-medium">Completed:</span> {new Date(r.completedAt).toLocaleString()}</p>
                 <p className="flex items-center gap-2"><Clock className="h-4 w-4" /> {r.timeSpent} min</p>
               </div>
               <div className="flex items-center gap-4">
-                <Badge variant="outline" className="text-blue-600">{r.score}/{r.totalQuestions}</Badge>
-                <Badge className={r.percentage >= 70 ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}>
-                  <Percent className="h-3 w-3 mr-1" />{r.percentage}%
+                <Badge variant="outline" className="text-blue-600">
+                  {r.score?.toFixed(1) || 0}/{r.totalPoints || 0}
                 </Badge>
+                <Badge className={r.percentage >= 70 ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}>
+                  <Percent className="h-3 w-3 mr-1" />{r.percentage.toFixed(1)}%
+                </Badge>
+                <Badge className={r.status === 'GRADED' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'}>
+                  {r.status}
+                </Badge>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => router.push(`/dashboard/teacher/exam/${examId}/submissions/${r.id}/review`)}
+                >
+                  <FileText className="h-4 w-4 mr-2" />
+                  Review
+                </Button>
               </div>
             </div>
           ))}

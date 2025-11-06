@@ -45,6 +45,7 @@ const CreateExamPage: React.FC = () => {
     allowReview: true,
     maxTabSwitchWarnings: 3,
     enableFullscreenMode: false,
+    maxIntentionalViolations: 3,
   };
 
   const [form, setForm] = useState<FormState>({
@@ -170,6 +171,7 @@ const CreateExamPage: React.FC = () => {
           lockdownBrowser: form.securitySettings.lockdownBrowser,
           maxTabSwitchWarnings: form.securitySettings.maxTabSwitchWarnings,
           enableFullscreenMode: form.securitySettings.enableFullscreenMode,
+          maxIntentionalViolations: form.securitySettings.maxIntentionalViolations || 3,
         },
       };
 

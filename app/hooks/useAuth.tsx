@@ -54,7 +54,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
         });
       }
     } catch (error) {
-      console.error("Auth check failed:", error);
+      // Silently handle auth errors - user is just not authenticated
+      // Only log if it's not a 401 (which is expected when not logged in)
+      const isExpectedError = error instanceof Error && 
+        (error.message.includes('Not authenticated') || 
+         error.message.includes('401') ||
+         error.message.includes('Authentication required'));
+      
+      if (!isExpectedError) {
+        console.error("Auth check failed:", error);
+      }
+      
       setAuthState({
         user: null,
         isAuthenticated: false,

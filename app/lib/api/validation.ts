@@ -56,6 +56,7 @@ export const createExamSchema = z.object({
     maxTabSwitchWarnings: z.number().min(1).max(10).default(3),
     enableFullscreenMode: z.boolean().default(false),
     disableDevTools: z.boolean().default(false),
+    maxIntentionalViolations: z.number().min(1).max(20).default(3),
   }),
 });
 
@@ -80,6 +81,7 @@ export const updateExamSchema = z.object({
     maxTabSwitchWarnings: z.number().min(1).max(10).optional(),
     enableFullscreenMode: z.boolean().optional(),
     disableDevTools: z.boolean().optional(),
+    maxIntentionalViolations: z.number().min(1).max(20).optional(),
   }).optional(),
 });
 

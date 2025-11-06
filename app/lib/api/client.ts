@@ -63,12 +63,24 @@ class ApiClient {
           ).join(', ');
           throw new Error(`${data.error || 'Validation failed'}: ${errorMessages}`);
         }
-        throw new Error(data.error || data.message || 'Request failed');
+        // For 401 errors, include the status code in the error message
+        const errorMsg = data.error || data.message || `Request failed with status ${response.status}`;
+        throw new Error(errorMsg);
       }
 
       return data.data as T;
     } catch (error) {
-      console.error('API Request Error:', error);
+      // Only log errors that aren't expected auth failures
+      // 401 errors on auth endpoints are normal when checking auth status
+      const isExpectedAuthError = endpoint.includes('/auth/me') && 
+        error instanceof Error && 
+        (error.message.includes('Not authenticated') || 
+         error.message.includes('401') ||
+         error.message.includes('Authentication required'));
+      
+      if (!isExpectedAuthError) {
+        console.error('API Request Error:', error);
+      }
       throw error instanceof Error ? error : new Error('Unknown error occurred');
     }
   }
@@ -171,6 +183,14 @@ export const api = {
     
     submissions: (id: string) =>
       apiClient.get(`/api/exams/${id}/submissions`),
+    
+    submission: {
+      get: (id: string) =>
+        apiClient.get(`/api/submissions/${id}`),
+      
+      grade: (id: string, data: { grades?: Array<{ questionId: string; pointsAwarded: number }>; feedback?: string; totalScore?: number }) =>
+        apiClient.patch(`/api/submissions/${id}`, data),
+    },
   },
 
   // Question endpoints

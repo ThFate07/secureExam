@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "../../hooks/useAuth";
 import { useExamTimer, useAntiCheat, useWebcam, useExamSession } from "../../hooks/useExam";
@@ -36,6 +36,16 @@ export default function ExamInterface() {
   const [violations, setViolations] = useState<string[]>([]);
   const [teacherMessages, setTeacherMessages] = useState<Array<{ message: string; timestamp: number }>>([]);
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
+  const [isTerminated, setIsTerminated] = useState(false);
+  
+  // Track violations by type with debouncing and count
+  const violationTimestamps = useRef<Map<string, number>>(new Map());
+  const intentionalViolationCounts = useRef<Map<string, number>>(new Map()); // Only intentional violations count
+  const lastViolationSent = useRef<Map<string, number>>(new Map());
+  const violationDebounceMs = 5000; // Don't send duplicate violations within 5 seconds
+  
+  // Get violation limit from exam settings, default to 3
+  const maxViolationsBeforeTermination = (exam?.settings as { maxIntentionalViolations?: number } | undefined)?.maxIntentionalViolations || 3;
 
   // Fetch exam data from API
   useEffect(() => {
@@ -72,8 +82,139 @@ export default function ExamInterface() {
     }
   }, [id, user, isAuthenticated, loading, router]);
 
+  const mapToEventType = (text: string):
+    | 'TAB_SWITCH'
+    | 'WINDOW_BLUR'
+    | 'COPY_PASTE'
+    | 'RIGHT_CLICK'
+    | 'FULLSCREEN_EXIT'
+    | 'WEBCAM_DISABLED'
+    | 'SUSPICIOUS_BEHAVIOR'
+    | 'NETWORK_ISSUE' => {
+    const t = text.toLowerCase();
+    if (t.includes('tab')) return 'TAB_SWITCH';
+    if (t.includes('blur') || t.includes('focus')) return 'WINDOW_BLUR';
+    if (t.includes('copy') || t.includes('paste') || t.includes('cut')) return 'COPY_PASTE';
+    if (t.includes('right-click') || t.includes('right click')) return 'RIGHT_CLICK';
+    if (t.includes('fullscreen')) return 'FULLSCREEN_EXIT';
+    if (t.includes('webcam')) return 'WEBCAM_DISABLED';
+    if (t.includes('network') || t.includes('connection')) return 'NETWORK_ISSUE';
+    return 'SUSPICIOUS_BEHAVIOR';
+  };
+
+  // Categorize violation as intentional or technical
+  const isIntentionalViolation = (violation: string, eventType: string): boolean => {
+    const lowerViolation = violation.toLowerCase();
+    const lowerEventType = eventType.toLowerCase();
+    
+    // Technical issues (not counted toward termination)
+    if (
+      lowerEventType === 'network_issue' ||
+      lowerViolation.includes('network') ||
+      lowerViolation.includes('connection') ||
+      lowerViolation.includes('timeout') ||
+      (lowerEventType === 'webcam_disabled' && (
+        lowerViolation.includes('permission') ||
+        lowerViolation.includes('hardware') ||
+        lowerViolation.includes('device not found') ||
+        lowerViolation.includes('failed to access')
+      ))
+    ) {
+      return false; // Technical issue
+    }
+    
+    // Intentional violations (counted toward termination)
+    if (
+      lowerEventType === 'copy_paste' ||
+      lowerEventType === 'right_click' ||
+      lowerViolation.includes('developer tools') ||
+      lowerViolation.includes('dev tools') ||
+      lowerViolation.includes('f12') ||
+      lowerViolation.includes('copy/paste') ||
+      lowerViolation.includes('copy/paste/cut attempted') ||
+      lowerViolation.includes('alt+tab') ||
+      lowerViolation.includes('print attempt')
+    ) {
+      return true; // Definitely intentional
+    }
+    
+    // Context-dependent: tab switching and fullscreen
+    // Single occurrences might be accidental, but patterns indicate intentional behavior
+    if (lowerEventType === 'tab_switch' || lowerEventType === 'window_blur') {
+      // If multiple tab switches in quick succession, it's intentional
+      const lastTabSwitch = violationTimestamps.current.get(eventType) || 0;
+      const timeSinceLast = Date.now() - lastTabSwitch;
+      // If tab switch happened within 30 seconds of last one, likely intentional pattern
+      // Single accidental tab switch is lenient
+      if (timeSinceLast < 30000) {
+        const existingCount = intentionalViolationCounts.current.get(eventType) || 0;
+        // Second tab switch within 30s = intentional, first one gets benefit of doubt
+        return existingCount >= 1;
+      }
+      // First occurrence gets benefit of doubt (accidental)
+      return false;
+    }
+    
+    if (lowerEventType === 'fullscreen_exit') {
+      // If user pressed ESC or clicked exit button, it's intentional
+      // But if browser/system forced exit (e.g., OS notification), it's technical
+      return !lowerViolation.includes('browser') && !lowerViolation.includes('system') && !lowerViolation.includes('auto');
+    }
+    
+    // Default: treat as intentional if context suggests it
+    return true;
+  };
+
   const handleViolation = (violation: string) => {
-    setViolations(prev => [...prev, `${new Date().toLocaleTimeString()}: ${violation}`]);
+    if (isTerminated) return; // Ignore violations if exam is already terminated
+
+    const eventType = mapToEventType(violation);
+    const isIntentional = isIntentionalViolation(violation, eventType);
+    const now = Date.now();
+    const lastSent = lastViolationSent.current.get(eventType) || 0;
+    const timeSinceLastSent = now - lastSent;
+
+    // Debounce: Skip if same violation type was sent recently
+    if (timeSinceLastSent < violationDebounceMs) {
+      // Only count intentional violations
+      if (isIntentional) {
+        const newCount = (intentionalViolationCounts.current.get(eventType) || 0) + 1;
+        intentionalViolationCounts.current.set(eventType, newCount);
+        
+        // Check termination even for debounced violations
+        if (newCount >= maxViolationsBeforeTermination && !isTerminated) {
+          setIsTerminated(true);
+          const eventTypeName = eventType.replace(/_/g, ' ').toLowerCase();
+          alert(`Exam terminated due to ${maxViolationsBeforeTermination} intentional ${eventTypeName} violations. Your exam will be automatically submitted.`);
+          setTimeout(() => {
+            if (examSessionDataRef.current && !examSessionDataRef.current.isSubmitted) {
+              examSessionDataRef.current.submitExam();
+            }
+          }, 1000);
+        }
+      }
+      return;
+    }
+
+    // Update violation count - only for intentional violations
+    let currentCount = intentionalViolationCounts.current.get(eventType) || 0;
+    if (isIntentional) {
+      currentCount += 1;
+      intentionalViolationCounts.current.set(eventType, currentCount);
+    }
+    violationTimestamps.current.set(eventType, now);
+    lastViolationSent.current.set(eventType, now);
+
+    // Update UI violations list (limit to last 50 to prevent memory issues)
+    const violationLabel = isIntentional 
+      ? `${violation} [Intentional: ${currentCount}/${maxViolationsBeforeTermination}]`
+      : `${violation} [Technical Issue - Not Counted]`;
+    
+    setViolations(prev => {
+      const newViolation = `${new Date().toLocaleTimeString()}: ${violationLabel}`;
+      return [...prev, newViolation].slice(-50);
+    });
+
     if (exam && user) {
       // Very naive severity heuristic
       const sev: 'low' | 'medium' | 'high' = /copy|paste|dev tools|fullscreen/i.test(violation)
@@ -81,50 +222,56 @@ export default function ExamInterface() {
         : /blur|focus|tab/i.test(violation)
         ? 'medium'
         : 'low';
+      
+      // Adjust severity based on intentional vs technical
+      const adjustedSev = isIntentional ? sev : 'low';
+      const sevApi = adjustedSev === 'high' ? 'HIGH' : adjustedSev === 'medium' ? 'MEDIUM' : 'LOW';
+      
       sendWSMonitoringEvent({
         type: 'violation',
         payload: {
           studentId: user.id,
-            examId: exam.id,
-            description: violation,
-            severity: sev,
-            timestamp: Date.now(),
+          examId: exam.id,
+          description: isIntentional 
+            ? `${violation} [Intentional Violation ${currentCount} of ${maxViolationsBeforeTermination}]`
+            : `${violation} [Technical Issue - Not Counted]`,
+          severity: adjustedSev,
+          timestamp: now,
         },
       });
+      
+      // Send to API (throttled by rate limiter, but we debounced on our end)
+      fetch('/api/monitor/events?noCache=' + now, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          examId: exam.id,
+          attemptId: attemptId || undefined,
+          type: eventType,
+          severity: sevApi,
+          description: isIntentional 
+            ? `${violation} [Intentional Violation ${currentCount} of ${maxViolationsBeforeTermination}]`
+            : `${violation} [Technical Issue - Not Counted]`,
+          metadata: {
+            isIntentional,
+            violationCategory: isIntentional ? 'intentional' : 'technical',
+          },
+        }),
+      }).catch(() => {/* ignore */});
 
-      // Persist to API so violations survive reloads and teacher view keeps history
-      const mapToEventType = (text: string):
-        | 'TAB_SWITCH'
-        | 'WINDOW_BLUR'
-        | 'COPY_PASTE'
-        | 'RIGHT_CLICK'
-        | 'FULLSCREEN_EXIT'
-        | 'WEBCAM_DISABLED'
-        | 'SUSPICIOUS_BEHAVIOR' => {
-        const t = text.toLowerCase();
-        if (t.includes('tab')) return 'TAB_SWITCH';
-        if (t.includes('blur') || t.includes('focus')) return 'WINDOW_BLUR';
-        if (t.includes('copy') || t.includes('paste') || t.includes('cut')) return 'COPY_PASTE';
-        if (t.includes('right-click') || t.includes('right click')) return 'RIGHT_CLICK';
-        if (t.includes('fullscreen')) return 'FULLSCREEN_EXIT';
-        if (t.includes('webcam')) return 'WEBCAM_DISABLED';
-        return 'SUSPICIOUS_BEHAVIOR';
-      };
-
-      const sevApi = sev === 'high' ? 'HIGH' : sev === 'medium' ? 'MEDIUM' : 'LOW';
-      try {
-        fetch('/api/monitor/events?noCache=' + Date.now(), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            examId: exam.id,
-            attemptId: attemptId || undefined,
-            type: mapToEventType(violation),
-            severity: sevApi,
-            description: violation,
-          }),
-        }).catch(() => {/* ignore */});
-      } catch {/* ignore */}
+      // Check if we've reached the threshold - only for intentional violations
+      if (isIntentional && currentCount >= maxViolationsBeforeTermination && !isTerminated) {
+        setIsTerminated(true);
+        const eventTypeName = eventType.replace(/_/g, ' ').toLowerCase();
+        alert(`Exam terminated due to ${maxViolationsBeforeTermination} intentional ${eventTypeName} violations. Your exam will be automatically submitted.`);
+        
+        // Automatically submit the exam with current answers
+        setTimeout(() => {
+          if (examSessionDataRef.current && !examSessionDataRef.current.isSubmitted) {
+            examSessionDataRef.current.submitExam();
+          }
+        }, 1000);
+      }
     }
   };
 
@@ -205,6 +352,12 @@ export default function ExamInterface() {
     onSubmit: handleSubmitExam,
   });
 
+  // Store examSessionData ref for violation handler
+  const examSessionDataRef = useRef(examSessionData);
+  useEffect(() => {
+    examSessionDataRef.current = examSessionData;
+  }, [examSessionData]);
+
   // Broadcast question changes
   useEffect(() => {
     if (!exam || !user) return;
@@ -258,6 +411,7 @@ export default function ExamInterface() {
   }, [webcam.isActive, exam, user]);
 
   // Restore persisted violations history for this attempt on reload
+  // Only show actual violations, not system events like EXAM_STARTED, EXAM_PAUSED, etc.
   useEffect(() => {
     if (!exam || !user) return;
     // Only fetch after attempt is initialized
@@ -267,7 +421,19 @@ export default function ExamInterface() {
         const res = await fetch(`/api/monitor/events?examId=${exam.id}&attemptId=${attemptId}`);
         const data = await res.json();
         if (data?.success && Array.isArray(data.data?.events)) {
-          const items: string[] = data.data.events
+          // Filter out non-violation events - only show actual security violations
+          const violationEventTypes = [
+            'TAB_SWITCH', 'WINDOW_BLUR', 'COPY_PASTE', 'RIGHT_CLICK',
+            'FULLSCREEN_EXIT', 'SUSPICIOUS_BEHAVIOR', 'WEBCAM_DISABLED',
+            'MULTIPLE_FACES', 'NO_FACE_DETECTED', 'FACE_CHANGED',
+            'UNAUTHORIZED_DEVICE', 'NETWORK_ISSUE'
+          ];
+          
+          const violationEvents = data.data.events.filter(
+            (e: { type: string }) => violationEventTypes.includes(e.type)
+          );
+          
+          const items: string[] = violationEvents
             .slice(0, 50)
             .map((e: { timestamp: string; description: string }) => `${new Date(e.timestamp).toLocaleTimeString()}: ${e.description}`);
           setViolations(items.reverse());
@@ -333,6 +499,13 @@ export default function ExamInterface() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Termination Alert */}
+      {isTerminated && (
+        <div className="bg-red-600 text-white p-4 text-center font-semibold sticky top-0 z-20">
+          ⚠️ Exam Terminated - Your exam will be submitted automatically due to excessive violations
+        </div>
+      )}
+      
       {/* Fixed Header */}
       <div className="bg-white shadow-sm border-b sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 py-4">
@@ -361,10 +534,11 @@ export default function ExamInterface() {
               {/* Submit Button */}
               <Button
                 onClick={() => setShowSubmitConfirm(true)}
+                disabled={isTerminated}
                 className="bg-green-600 hover:bg-green-700"
               >
                 <Send className="h-4 w-4 mr-2" />
-                Submit Exam
+                {isTerminated ? 'Submitting...' : 'Submit Exam'}
               </Button>
             </div>
           </div>
@@ -396,34 +570,62 @@ export default function ExamInterface() {
                 {currentQuestion && (
                   <>
                     <div className="text-lg">{currentQuestion.question}</div>
-                    
-                    {currentQuestion.type === "mcq" && currentQuestion.options && (
-                      <div className="space-y-3">
-                        {currentQuestion.options.map((option, index) => (
-                          <label key={index} className="flex items-center space-x-3 cursor-pointer">
-                            <input
-                              type="radio"
-                              name={`question-${currentQuestion.id}`}
-                              value={index}
-                              checked={examSessionData.answers.get(currentQuestion.id) === index}
-                              onChange={(e) => examSessionData.updateAnswer(currentQuestion.id, parseInt(e.target.value))}
-                              className="h-4 w-4 text-blue-600"
-                            />
-                            <span className="text-gray-900">{option}</span>
-                          </label>
-                        ))}
-                      </div>
-                    )}
 
-                    {currentQuestion.type === "short-answer" && (
-                      <textarea
-                        className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        rows={6}
-                        placeholder="Enter your answer here..."
-                        value={examSessionData.answers.get(currentQuestion.id) || ""}
-                        onChange={(e) => examSessionData.updateAnswer(currentQuestion.id, e.target.value)}
-                      />
-                    )}
+                    {(() => {
+                      const rawType = (currentQuestion as unknown as { type?: string }).type || "";
+                      const normalized = rawType.toString().toLowerCase().replace(/\s+/g, "-");
+
+                      // MCQ rendering (supports "mcq" or "mcq" in any casing)
+                      if (normalized === "mcq") {
+                        const opts = Array.isArray(currentQuestion.options) ? currentQuestion.options : [];
+                        return (
+                          <div className="space-y-3">
+                            {opts.map((option: string, index: number) => (
+                              <label key={index} className="flex items-center space-x-3 cursor-pointer">
+                                <input
+                                  type="radio"
+                                  name={`question-${currentQuestion.id}`}
+                                  value={index}
+                                  checked={examSessionData.answers.get(currentQuestion.id) === index}
+                                  onChange={(e) => examSessionData.updateAnswer(currentQuestion.id, parseInt(e.target.value))}
+                                  disabled={isTerminated}
+                                  className="h-4 w-4 text-blue-600"
+                                />
+                                <span className="text-gray-900">{option}</span>
+                              </label>
+                            ))}
+                          </div>
+                        );
+                      }
+
+                      // Long-answer rendering for short/essay types in any casing (e.g., SHORT_ANSWER, short-answer, essay)
+                      if (normalized === "short-answer" || normalized === "short_answer" || normalized === "essay") {
+                        const value = (examSessionData.answers.get(currentQuestion.id) as string) || "";
+                        return (
+                          <textarea
+                            className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            rows={8}
+                            placeholder="Type your answer here..."
+                            value={value}
+                            onChange={(e) => examSessionData.updateAnswer(currentQuestion.id, e.target.value)}
+                            disabled={isTerminated}
+                          />
+                        );
+                      }
+
+                      // Fallback: show a textarea to ensure answers can always be entered
+                      const value = (examSessionData.answers.get(currentQuestion.id) as string) || "";
+                      return (
+                        <textarea
+                          className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          rows={6}
+                          placeholder="Type your answer here..."
+                          value={value}
+                          onChange={(e) => examSessionData.updateAnswer(currentQuestion.id, e.target.value)}
+                          disabled={isTerminated}
+                        />
+                      );
+                    })()}
                   </>
                 )}
 
@@ -518,12 +720,21 @@ export default function ExamInterface() {
                     <video
                       autoPlay
                       muted
+                      playsInline
                       className="w-full rounded border"
                       ref={(video) => {
                         if (video && webcam.stream) {
-                          video.srcObject = webcam.stream;
+                          // Only update if stream has changed to prevent flickering
+                          if (video.srcObject !== webcam.stream) {
+                            video.srcObject = webcam.stream;
+                            // Play is called by autoplay attribute, but catch any errors
+                            video.play().catch(() => {
+                              // Silently handle play promise rejection
+                            });
+                          }
                         }
                       }}
+                      key={`video-${webcam.isActive}`}
                     />
                   ) : (
                     <div className="aspect-video bg-gray-100 rounded border flex items-center justify-center">

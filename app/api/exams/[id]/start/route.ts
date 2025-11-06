@@ -33,12 +33,17 @@ interface SerializedExam {
 const lowerExamStatus = (status: ExamStatus): LowercaseExamStatus =>
   status.toLowerCase() as LowercaseExamStatus;
 
+interface RouteContext {
+  params: Promise<{ id: string }>;
+}
+
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: RouteContext
 ) {
   try {
     const user = await requireStudent(request);
+    const params = await context.params;
     const { id } = params;
 
     // Check if student is enrolled

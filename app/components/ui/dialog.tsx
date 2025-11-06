@@ -33,26 +33,43 @@ const Dialog: React.FC<DialogProps> = ({ open, onOpenChange, children }) => {
   );
 };
 
-const DialogTrigger = React.forwardRef<
-  HTMLButtonElement,
-  React.ButtonHTMLAttributes<HTMLButtonElement>
->(({ className, onClick, children, ...props }, ref) => {
-  const { setOpen } = useDialogContext();
-  
-  return (
-    <button
-      ref={ref}
-      className={className}
-      onClick={(e) => {
-        setOpen(true);
-        onClick?.(e);
-      }}
-      {...props}
-    >
-      {children}
-    </button>
-  );
-});
+type DialogTriggerProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  asChild?: boolean;
+};
+
+const DialogTrigger = React.forwardRef<HTMLButtonElement, DialogTriggerProps>(
+  ({ className, onClick, children, asChild, ...props }, ref) => {
+    const { setOpen } = useDialogContext();
+
+    const handleClick: React.MouseEventHandler<HTMLButtonElement> = (e) => {
+      setOpen(true);
+      onClick?.(e);
+    };
+
+    if (asChild && React.isValidElement(children)) {
+      return React.cloneElement(children as React.ReactElement, {
+        onClick: (e: React.MouseEvent<HTMLButtonElement>) => {
+          handleClick(e);
+          // @ts-expect-error - child may have its own onClick
+          children.props?.onClick?.(e);
+        },
+        className,
+        ref,
+      });
+    }
+
+    return (
+      <button
+        ref={ref}
+        className={className}
+        onClick={handleClick}
+        {...props}
+      >
+        {children}
+      </button>
+    );
+  }
+);
 DialogTrigger.displayName = "DialogTrigger";
 
 const DialogContent = React.forwardRef<
