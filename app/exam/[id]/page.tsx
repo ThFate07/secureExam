@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "../../hooks/useAuth";
 import { useExamTimer, useAntiCheat, useWebcam, useExamSession } from "../../hooks/useExam";
+import { useFaceProctoring } from "../../hooks/useFaceProctoring";
 // Use WebSocket-based monitoring for cross-device real-time updates
 import { 
   sendMonitoringEvent as sendWSMonitoringEvent,
@@ -82,7 +83,7 @@ export default function ExamInterface() {
     }
   }, [id, user, isAuthenticated, loading, router]);
 
-  const handleViolation = (violation: string) => {
+  const handleViolation = useCallback((violation: string) => {
     setViolations(prev => [...prev, `${new Date().toLocaleTimeString()}: ${violation}`]);
     if (exam && user) {
       // Very naive severity heuristic
@@ -136,7 +137,7 @@ export default function ExamInterface() {
         }).catch(() => {/* ignore */});
       } catch {/* ignore */}
     }
-  };
+  }, [exam, user, attemptId]);
 
   const handleSubmitExam = async (answers: Map<string, string | number>) => {
     if (!exam) return;
@@ -209,6 +210,14 @@ export default function ExamInterface() {
     onError: (error) => handleViolation(`Webcam error: ${error}`),
   });
 
+  const faceMonitor = useFaceProctoring({
+    stream: webcam.stream,
+    enabled: Boolean(exam?.settings.requireWebcam && !examTerminated),
+    onViolation: handleViolation,
+  });
+
+  const webcamVideoRef = useRef<HTMLVideoElement | null>(null);
+
   const examSessionData = useExamSession({
     examId: id as string,
     questions: exam?.questions || [],
@@ -242,6 +251,27 @@ export default function ExamInterface() {
   useEffect(() => {
     webcamActiveRef.current = webcam.isActive;
   }, [webcam.isActive]);
+
+  // Keep the <video> element bound to the active stream without forcing re-mounts
+  useEffect(() => {
+    const video = webcamVideoRef.current;
+    if (!video) {
+      return;
+    }
+
+    if (webcam.stream && webcam.isActive) {
+      if (video.srcObject !== webcam.stream) {
+        video.srcObject = webcam.stream;
+      }
+
+      const playPromise = video.play();
+      if (playPromise && typeof playPromise.then === "function") {
+        playPromise.catch(() => undefined);
+      }
+    } else if (video.srcObject) {
+      video.srcObject = null;
+    }
+  }, [webcam.stream, webcam.isActive]);
 
   useEffect(() => {
     if (!exam || !user) return;
@@ -308,8 +338,9 @@ export default function ExamInterface() {
           const text = await res.text().catch(() => '');
           handleViolation(`Snapshot upload failed: ${res.status} ${res.statusText} ${text}`);
         }
-      } catch (err: any) {
-        handleViolation(`Snapshot upload error: ${err?.message || String(err)}`);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        handleViolation(`Snapshot upload error: ${message}`);
       } finally {
         uploading = false;
       }
@@ -324,7 +355,7 @@ export default function ExamInterface() {
       clearTimeout(immediate);
       clearInterval(interval);
     };
-  }, [webcam, attemptId, exam, user]);
+  }, [webcam, attemptId, exam, user, handleViolation]);
 
   // Restore persisted violations history for this attempt on reload
   useEffect(() => {
@@ -459,6 +490,49 @@ export default function ExamInterface() {
 
   const progress = examSessionData.getProgress();
   const currentQuestion = examSessionData.currentQuestion;
+
+  const faceMonitorTone = !exam?.settings.requireWebcam
+    ? "info"
+    : faceMonitor.status === "error"
+    ? "error"
+    : faceMonitor.status !== "ready"
+    ? "info"
+    : faceMonitor.orientation === "ok" && faceMonitor.faceCount === 1
+    ? "success"
+    : "warning";
+
+  const faceMonitorStatusClass = {
+    success: "bg-green-50 border-green-200 text-green-700",
+    warning: "bg-yellow-50 border-yellow-200 text-yellow-700",
+    error: "bg-red-50 border-red-200 text-red-700",
+    info: "bg-blue-50 border-blue-200 text-blue-700",
+  }[faceMonitorTone];
+
+  const faceMonitorStatusMessage = !exam?.settings.requireWebcam
+    ? "Face monitoring disabled for this exam."
+    : faceMonitor.message ??
+      (faceMonitor.status === "loading"
+        ? "Initializing face monitor..."
+        : faceMonitor.status === "error"
+        ? "Face monitoring encountered an error"
+        : "Face monitoring active");
+
+  const faceMonitorSummary = !exam?.settings.requireWebcam
+    ? "Disabled"
+    : faceMonitor.status === "error"
+    ? "Error"
+    : faceMonitor.status !== "ready"
+    ? "Monitoring..."
+    : faceMonitor.orientation === "ok" && faceMonitor.faceCount === 1
+    ? "Normal"
+    : "Attention";
+
+  const faceMonitorSummaryClass = {
+    success: "text-green-600",
+    warning: "text-yellow-600",
+    error: "text-red-600",
+    info: "text-blue-600",
+  }[faceMonitorTone];
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -647,12 +721,9 @@ export default function ExamInterface() {
                     <video
                       autoPlay
                       muted
+                      playsInline
                       className="w-full rounded border"
-                      ref={(video) => {
-                        if (video && webcam.stream) {
-                          video.srcObject = webcam.stream;
-                        }
-                      }}
+                      ref={webcamVideoRef}
                     />
                   ) : (
                     <div className="aspect-video bg-gray-100 rounded border flex items-center justify-center">
@@ -668,6 +739,19 @@ export default function ExamInterface() {
                       <AlertDescription className="text-xs">{webcam.error}</AlertDescription>
                     </Alert>
                   )}
+                  <div
+                    className={`mt-3 text-xs rounded border px-2 py-2 transition-colors ${faceMonitorStatusClass}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold">Face monitor</span>
+                      {faceMonitor.status === "ready" && faceMonitor.faceCount > 0 && (
+                        <span className="font-medium">
+                          {faceMonitor.faceCount} {faceMonitor.faceCount === 1 ? "face" : "faces"}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 leading-relaxed">{faceMonitorStatusMessage}</div>
+                  </div>
                 </CardContent>
               </Card>
             )}
@@ -710,6 +794,14 @@ export default function ExamInterface() {
                       {violations.length}
                     </span>
                   </div>
+                  {exam.settings.requireWebcam && (
+                    <div className="flex items-center justify-between">
+                      <span>Face monitor:</span>
+                      <span className={`text-xs font-medium ${faceMonitorSummaryClass}`}>
+                        {faceMonitorSummary}
+                      </span>
+                    </div>
+                  )}
                   {violations.length > 0 && (
                     <div className="max-h-20 overflow-y-auto text-xs text-red-600">
                       {violations.slice(-3).map((violation, index) => (
