@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { Button } from "../../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Alert, AlertDescription } from "../../../components/ui/alert";
-import { CheckCircle, AlertTriangle, Camera, ArrowLeft, Play } from "lucide-react";
+import { CheckCircle, AlertTriangle, Camera, ArrowLeft, Play, Activity } from "lucide-react";
 import { useAuth } from "../../../hooks/useAuth";
 import { api } from "../../../lib/api/client";
+import { useWebcam } from "../../../hooks/useExam";
+import { useFaceDetection } from "../../../hooks/useFaceDetection";
 
 export default function StartExamPage() {
   const router = useRouter();
@@ -29,10 +31,83 @@ export default function StartExamPage() {
   const [cameraPermission, setCameraPermission] = useState<boolean | null>(null);
   const [fullscreenSupported, setFullscreenSupported] = useState(false);
   const [isReady, setIsReady] = useState(false);
+  const [faceCalibrated, setFaceCalibrated] = useState(false);
+  const [faceCalibrationStatus, setFaceCalibrationStatus] = useState<{
+    faceDetected: boolean;
+    faceCount: number;
+    confidence: number;
+    message: string;
+  }>({
+    faceDetected: false,
+    faceCount: 0,
+    confidence: 0,
+    message: 'Position yourself in front of the camera',
+  });
+  const videoElementRef = useRef<HTMLVideoElement | null>(null);
+  const [videoElementForDetection, setVideoElementForDetection] = useState<HTMLVideoElement | null>(null);
   
   // Determine what's actually required based on exam settings
   const requiresCamera = exam?.settings?.requireWebcam ?? false;
   const requiresFullscreen = exam?.settings?.enableFullscreenMode ?? false;
+
+  // Setup webcam for calibration
+  const webcam = useWebcam({
+    enabled: requiresCamera,
+    onError: (error) => {
+      setFaceCalibrationStatus({
+        faceDetected: false,
+        faceCount: 0,
+        confidence: 0,
+        message: `Camera error: ${error}`,
+      });
+    },
+  });
+
+  // Face detection for calibration
+  const faceDetection = useFaceDetection({
+    enabled: requiresCamera && cameraPermission === true,
+    videoElement: videoElementForDetection || undefined,
+    onDetection: (result) => {
+      if (result.hasFace && result.faceCount === 1 && result.confidence > 0.7) {
+        setFaceCalibrationStatus({
+          faceDetected: true,
+          faceCount: result.faceCount,
+          confidence: result.confidence,
+          message: 'Face detected! You\'re ready to start.',
+        });
+        // Auto-calibrate after 2 seconds of good detection
+        if (!faceCalibrated) {
+          setTimeout(() => {
+            setFaceCalibrated(true);
+          }, 2000);
+        }
+      } else if (result.faceCount === 0) {
+        setFaceCalibrationStatus({
+          faceDetected: false,
+          faceCount: 0,
+          confidence: 0,
+          message: 'No face detected. Please position yourself in front of the camera.',
+        });
+        setFaceCalibrated(false);
+      } else if (result.hasMultipleFaces) {
+        setFaceCalibrationStatus({
+          faceDetected: false,
+          faceCount: result.faceCount,
+          confidence: result.confidence,
+          message: `Multiple faces detected (${result.faceCount}). Please ensure only you are visible.`,
+        });
+        setFaceCalibrated(false);
+      } else {
+        setFaceCalibrationStatus({
+          faceDetected: false,
+          faceCount: result.faceCount,
+          confidence: result.confidence || 0,
+          message: 'Face detection in progress...',
+        });
+        setFaceCalibrated(false);
+      }
+    },
+  });
 
   useEffect(() => {
     // Fetch exam from API (without correct answers for security)
@@ -123,8 +198,9 @@ export default function StartExamPage() {
     // Check if all requirements are met based on what's actually required
     const cameraReady = !requiresCamera || cameraPermission === true;
     const fullscreenReady = !requiresFullscreen || fullscreenSupported;
-    setIsReady(cameraReady && fullscreenReady);
-  }, [cameraPermission, fullscreenSupported, requiresCamera, requiresFullscreen]);
+    const faceReady = !requiresCamera || faceCalibrated;
+    setIsReady(cameraReady && fullscreenReady && faceReady);
+  }, [cameraPermission, fullscreenSupported, requiresCamera, requiresFullscreen, faceCalibrated]);
 
   if (loading || !exam) {
     if (loading) {
@@ -227,6 +303,120 @@ export default function StartExamPage() {
                 </div>
               )}
 
+              {/* Face Detection Calibration - Only show if camera is required and permission granted */}
+              {requiresCamera && cameraPermission === true && (
+                <Card className="mt-4 border-2 border-blue-200">
+                  <CardHeader>
+                    <CardTitle className="text-lg flex items-center space-x-2">
+                      <Activity className="h-5 w-5" />
+                      <span>Face Detection Setup</span>
+                    </CardTitle>
+                    <CardDescription>
+                      Position yourself in front of the camera to calibrate face detection
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {/* Video Feed */}
+                    {webcam.isActive && webcam.stream ? (
+                      <div className="relative">
+                        <video
+                          autoPlay
+                          muted
+                          playsInline
+                          className="w-full rounded border-2 border-gray-300"
+                          ref={(video) => {
+                            videoElementRef.current = video;
+                            if (video && webcam.stream) {
+                              setVideoElementForDetection(video);
+                              if (video.srcObject !== webcam.stream) {
+                                video.srcObject = webcam.stream;
+                                video.play().catch(() => {});
+                              }
+                            }
+                          }}
+                        />
+                        {/* Overlay status */}
+                        <div className="absolute top-2 right-2 bg-black bg-opacity-70 text-white px-3 py-2 rounded text-sm">
+                          {faceCalibrated ? (
+                            <span className="flex items-center space-x-1">
+                              <CheckCircle className="h-4 w-4 text-green-400" />
+                              <span>Calibrated</span>
+                            </span>
+                          ) : (
+                            <span className="flex items-center space-x-1">
+                              <Activity className="h-4 w-4 animate-pulse text-yellow-400" />
+                              <span>Calibrating...</span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="aspect-video bg-gray-100 rounded border flex items-center justify-center">
+                        <div className="text-center text-gray-500">
+                          <Camera className="h-8 w-8 mx-auto mb-2" />
+                          <p className="text-sm">Starting camera...</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Detection Status */}
+                    <div className="p-4 bg-gray-50 rounded-lg space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium">Status:</span>
+                        <span className={`text-sm font-semibold ${
+                          faceCalibrated ? 'text-green-600' : 
+                          faceCalibrationStatus.faceDetected ? 'text-yellow-600' : 
+                          'text-red-600'
+                        }`}>
+                          {faceCalibrationStatus.message}
+                        </span>
+                      </div>
+                      {faceDetection.lastDetection && (
+                        <div className="grid grid-cols-3 gap-2 text-xs">
+                          <div>
+                            <span className="text-gray-600">Faces:</span>
+                            <span className={`ml-1 font-medium ${
+                              faceDetection.lastDetection.faceCount === 1 ? 'text-green-600' : 'text-red-600'
+                            }`}>
+                              {faceDetection.lastDetection.faceCount}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600">Confidence:</span>
+                            <span className="ml-1 font-medium">
+                              {(faceDetection.lastDetection.confidence * 100).toFixed(0)}%
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600">Ready:</span>
+                            <span className={`ml-1 font-medium ${faceCalibrated ? 'text-green-600' : 'text-gray-400'}`}>
+                              {faceCalibrated ? 'Yes' : 'No'}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                      {!faceDetection.isReady && (
+                        <div className="text-xs text-yellow-600">
+                          Loading face detection models... Please wait.
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Instructions */}
+                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                      <p className="text-sm text-blue-800 font-medium mb-2">Setup Instructions:</p>
+                      <ul className="text-xs text-blue-700 space-y-1 list-disc list-inside">
+                        <li>Sit directly in front of your camera</li>
+                        <li>Ensure your face is well-lit</li>
+                        <li>Remove any masks or face coverings</li>
+                        <li>Make sure only you are visible in the frame</li>
+                        <li>Wait for "Calibrated" status before starting</li>
+                      </ul>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Fullscreen Support - Only show if required */}
               {requiresFullscreen && (
                 <div className="flex items-center justify-between p-3 border rounded-lg">
@@ -290,11 +480,12 @@ export default function StartExamPage() {
         </Card>
 
         {/* Warnings - Only show if requirements are not met */}
-        {((requiresCamera && !cameraPermission) || (requiresFullscreen && !fullscreenSupported)) && (
+        {((requiresCamera && (!cameraPermission || !faceCalibrated)) || (requiresFullscreen && !fullscreenSupported)) && (
           <Alert variant="destructive" className="mb-6">
             <AlertTriangle className="h-4 w-4" />
             <AlertDescription>
               {requiresCamera && !cameraPermission && "Camera access is required for this exam. Please allow camera permissions and refresh the page. "}
+              {requiresCamera && cameraPermission && !faceCalibrated && "Please complete face detection calibration above before starting the exam. "}
               {requiresFullscreen && !fullscreenSupported && "Your browser does not support fullscreen mode. Please use a modern browser like Chrome, Firefox, or Safari."}
             </AlertDescription>
           </Alert>
@@ -313,7 +504,7 @@ export default function StartExamPage() {
             }`}
           >
             <Play className="w-5 h-5 mr-2" />
-            {isReady ? "Start Exam" : "Complete Setup Required"}
+            {isReady ? "Start Exam" : requiresCamera && !faceCalibrated ? "Complete Face Calibration" : "Complete Setup Required"}
           </Button>
         </div>
 

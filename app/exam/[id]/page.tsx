@@ -48,11 +48,25 @@ export default function ExamInterface() {
   // Track violations by type with debouncing and count
   const violationTimestamps = useRef<Map<string, number>>(new Map());
   const intentionalViolationCounts = useRef<Map<string, number>>(new Map()); // Only intentional violations count
+  const faceViolationCounts = useRef<Map<string, number>>(new Map()); // Separate tracking for face violations (lenient, non-terminating)
   const lastViolationSent = useRef<Map<string, number>>(new Map());
   const violationDebounceMs = 5000; // Don't send duplicate violations within 5 seconds
   
+  // Face detection violation types - these don't count towards termination
+  const FACE_DETECTION_VIOLATIONS = ['NO_FACE_DETECTED', 'LOOKING_AWAY', 'FACE_CHANGED', 'MULTIPLE_FACES'];
+  const isFaceDetectionViolation = (eventType: string): boolean => {
+    return FACE_DETECTION_VIOLATIONS.includes(eventType);
+  };
+
   // Get violation limit from exam settings, default to 3
-  const maxViolationsBeforeTermination = (exam?.settings as { maxIntentionalViolations?: number } | undefined)?.maxIntentionalViolations || 3;
+  const baseMaxViolations = (exam?.settings as { maxIntentionalViolations?: number } | undefined)?.maxIntentionalViolations || 3;
+  const getViolationLimit = (eventType: string) => {
+    // Face detection violations don't count towards termination - return Infinity
+    if (isFaceDetectionViolation(eventType)) {
+      return Infinity; // Never terminate for face violations
+    }
+    return baseMaxViolations;
+  };
 
   // Fetch exam data from API
   useEffect(() => {
@@ -115,8 +129,18 @@ export default function ExamInterface() {
     | 'FULLSCREEN_EXIT'
     | 'WEBCAM_DISABLED'
     | 'SUSPICIOUS_BEHAVIOR'
-    | 'NETWORK_ISSUE' => {
+    | 'NETWORK_ISSUE'
+    | 'NO_FACE_DETECTED'
+    | 'MULTIPLE_FACES'
+    | 'FACE_CHANGED'
+    | 'LOOKING_AWAY' => {
     const t = text.toLowerCase();
+    // Face detection violations
+    if (t.includes('face detection') || t.includes('no face detected')) return 'NO_FACE_DETECTED';
+    if (t.includes('multiple faces')) return 'MULTIPLE_FACES';
+    if (t.includes('face changed') || t.includes('different face')) return 'FACE_CHANGED';
+    if (t.includes('looking away') || t.includes('head pose')) return 'LOOKING_AWAY';
+    // Other violations
     if (t.includes('tab')) return 'TAB_SWITCH';
     if (t.includes('blur') || t.includes('focus')) return 'WINDOW_BLUR';
     if (t.includes('copy') || t.includes('paste') || t.includes('cut')) return 'COPY_PASTE';
@@ -129,6 +153,10 @@ export default function ExamInterface() {
 
   // Categorize violation as intentional or technical
   const isIntentionalViolation = (violation: string, eventType: string): boolean => {
+    // Face detection violations should always be considered intentional/suspicious
+    if (violation.includes('Face detection:')) {
+      return true;
+    }
     const lowerViolation = violation.toLowerCase();
     const lowerEventType = eventType.toLowerCase();
     
@@ -203,37 +231,64 @@ export default function ExamInterface() {
     if (timeSinceLastSent < violationDebounceMs) {
       // Only count intentional violations
       if (isIntentional) {
-        const newCount = (intentionalViolationCounts.current.get(eventType) || 0) + 1;
-        intentionalViolationCounts.current.set(eventType, newCount);
-        
-        // Check termination even for debounced violations
-        if (newCount >= maxViolationsBeforeTermination && !isTerminated) {
-          setIsTerminated(true);
-          const eventTypeName = eventType.replace(/_/g, ' ').toLowerCase();
-          alert(`Exam terminated due to ${maxViolationsBeforeTermination} intentional ${eventTypeName} violations. Your exam will be automatically submitted.`);
-          setTimeout(() => {
-            if (examSessionDataRef.current && !examSessionDataRef.current.isSubmitted) {
-              examSessionDataRef.current.submitExam();
-            }
-          }, 1000);
+        // Track face violations separately (they don't cause termination)
+        if (isFaceDetectionViolation(eventType)) {
+          const newCount = (faceViolationCounts.current.get(eventType) || 0) + 1;
+          faceViolationCounts.current.set(eventType, newCount);
+          // Face violations don't cause termination - just track for logging
+        } else {
+          // Non-face violations can cause termination
+          const newCount = (intentionalViolationCounts.current.get(eventType) || 0) + 1;
+          intentionalViolationCounts.current.set(eventType, newCount);
+          
+          // Check termination even for debounced violations (only for non-face violations)
+          const violationLimit = getViolationLimit(eventType);
+          if (violationLimit !== Infinity && newCount >= violationLimit && !isTerminated) {
+            setIsTerminated(true);
+            const eventTypeName = eventType.replace(/_/g, ' ').toLowerCase();
+            alert(`Exam terminated due to ${violationLimit} intentional ${eventTypeName} violations. Your exam will be automatically submitted.`);
+            setTimeout(() => {
+              if (examSessionDataRef.current && !examSessionDataRef.current.isSubmitted) {
+                examSessionDataRef.current.submitExam();
+              }
+            }, 1000);
+          }
         }
       }
       return;
     }
 
-    // Update violation count - only for intentional violations
-    let currentCount = intentionalViolationCounts.current.get(eventType) || 0;
+    // Update violation count - separate tracking for face vs non-face violations
+    let currentCount = 0;
+    const violationLimit = getViolationLimit(eventType);
+    const isFaceViolation = isFaceDetectionViolation(eventType);
+    
     if (isIntentional) {
-      currentCount += 1;
-      intentionalViolationCounts.current.set(eventType, currentCount);
+      if (isFaceViolation) {
+        // Face violations tracked separately (lenient, non-terminating)
+        currentCount = (faceViolationCounts.current.get(eventType) || 0) + 1;
+        faceViolationCounts.current.set(eventType, currentCount);
+      } else {
+        // Non-face violations count towards termination
+        currentCount = (intentionalViolationCounts.current.get(eventType) || 0) + 1;
+        intentionalViolationCounts.current.set(eventType, currentCount);
+      }
     }
+    
     violationTimestamps.current.set(eventType, now);
     lastViolationSent.current.set(eventType, now);
 
     // Update UI violations list (limit to last 50 to prevent memory issues)
-    const violationLabel = isIntentional 
-      ? `${violation} [Intentional: ${currentCount}/${maxViolationsBeforeTermination}]`
-      : `${violation} [Technical Issue - Not Counted]`;
+    let violationLabel: string;
+    if (isIntentional) {
+      if (isFaceViolation) {
+        violationLabel = `${violation} [Lenient Violation: ${currentCount} - Alerted Faculty, No Termination]`;
+      } else {
+        violationLabel = `${violation} [Intentional: ${currentCount}/${violationLimit}]`;
+      }
+    } else {
+      violationLabel = `${violation} [Technical Issue - Not Counted]`;
+    }
     
     setViolations(prev => {
       const newViolation = `${new Date().toLocaleTimeString()}: ${violationLabel}`;
@@ -252,14 +307,24 @@ export default function ExamInterface() {
       const adjustedSev = isIntentional ? sev : 'low';
       const sevApi = adjustedSev === 'high' ? 'HIGH' : adjustedSev === 'medium' ? 'MEDIUM' : 'LOW';
       
+      // Prepare violation description
+      let violationDescription: string;
+      if (isIntentional) {
+        if (isFaceViolation) {
+          violationDescription = `${violation} [Lenient Violation ${currentCount} - Alerted Faculty, Does Not Cause Termination]`;
+        } else {
+          violationDescription = `${violation} [Intentional Violation ${currentCount} of ${violationLimit}]`;
+        }
+      } else {
+        violationDescription = `${violation} [Technical Issue - Not Counted]`;
+      }
+      
       sendWSMonitoringEvent({
         type: 'violation',
         payload: {
           studentId: user.id,
           examId: exam.id,
-          description: isIntentional 
-            ? `${violation} [Intentional Violation ${currentCount} of ${maxViolationsBeforeTermination}]`
-            : `${violation} [Technical Issue - Not Counted]`,
+          description: violationDescription,
           severity: adjustedSev,
           timestamp: now,
         },
@@ -274,28 +339,34 @@ export default function ExamInterface() {
           attemptId: attemptId || undefined,
           type: eventType,
           severity: sevApi,
-          description: isIntentional 
-            ? `${violation} [Intentional Violation ${currentCount} of ${maxViolationsBeforeTermination}]`
-            : `${violation} [Technical Issue - Not Counted]`,
+          description: violationDescription,
           metadata: {
             isIntentional,
-            violationCategory: isIntentional ? 'intentional' : 'technical',
+            violationCategory: isIntentional 
+              ? (isFaceViolation ? 'lenient' : 'intentional') 
+              : 'technical',
+            isFaceDetectionViolation: isFaceViolation,
+            doesNotCauseTermination: isFaceViolation,
           },
         }),
       }).catch(() => {/* ignore */});
 
-      // Check if we've reached the threshold - only for intentional violations
-      if (isIntentional && currentCount >= maxViolationsBeforeTermination && !isTerminated) {
-        setIsTerminated(true);
-        const eventTypeName = eventType.replace(/_/g, ' ').toLowerCase();
-        alert(`Exam terminated due to ${maxViolationsBeforeTermination} intentional ${eventTypeName} violations. Your exam will be automatically submitted.`);
-        
-        // Automatically submit the exam with current answers
-        setTimeout(() => {
-          if (examSessionDataRef.current && !examSessionDataRef.current.isSubmitted) {
-            examSessionDataRef.current.submitExam();
-          }
-        }, 1000);
+      // Check if we've reached the threshold - only for non-face intentional violations
+      // Face violations never cause termination
+      if (isIntentional && !isFaceViolation && !isTerminated) {
+        const violationLimitForCheck = getViolationLimit(eventType);
+        if (violationLimitForCheck !== Infinity && currentCount >= violationLimitForCheck) {
+          setIsTerminated(true);
+          const eventTypeName = eventType.replace(/_/g, ' ').toLowerCase();
+          alert(`Exam terminated due to ${violationLimitForCheck} intentional ${eventTypeName} violations. Your exam will be automatically submitted.`);
+          
+          // Automatically submit the exam with current answers
+          setTimeout(() => {
+            if (examSessionDataRef.current && !examSessionDataRef.current.isSubmitted) {
+              examSessionDataRef.current.submitExam();
+            }
+          }, 1000);
+        }
       }
     }
   };
@@ -371,24 +442,35 @@ export default function ExamInterface() {
     onError: (error) => handleViolation(`Webcam error: ${error}`),
   });
 
+  // State to track video element for face detection
+  const [videoElementForDetection, setVideoElementForDetection] = useState<HTMLVideoElement | null>(null);
+
   // Face detection for suspicious behavior
   const faceDetection = useFaceDetection({
     enabled: exam?.settings.requireWebcam || false,
-    videoElement: videoElementRef.current || undefined,
+    videoElement: videoElementForDetection || undefined,
     onViolation: (type, description) => {
+      console.log('[Face Detection] ⚠️ VIOLATION DETECTED:', type, description);
+      
       // Map face detection violations to violation handler
       handleViolation(`Face detection: ${description}`);
       
       // Send monitoring event
       if (exam && attemptId && user) {
         const severity = type === 'FACE_CHANGED' || type === 'MULTIPLE_FACES' ? 'HIGH' : 'MEDIUM';
+        
+        console.log('[Face Detection] Sending monitoring event:', { type, severity, description });
+        
         sendWSMonitoringEvent({
           examId: exam.id,
           attemptId,
           type: type as any,
           severity: severity as any,
           description,
-        }).catch(() => {
+        }).then(() => {
+          console.log('[Face Detection] ✓ Monitoring event sent via WebSocket');
+        }).catch((err) => {
+          console.warn('[Face Detection] WebSocket failed, trying HTTP API:', err);
           // Fallback to HTTP API if WebSocket fails
           fetch('/api/monitor/events', {
             method: 'POST',
@@ -400,8 +482,14 @@ export default function ExamInterface() {
               severity: severity as any,
               description,
             }),
-          }).catch(() => {});
+          }).then(() => {
+            console.log('[Face Detection] ✓ Monitoring event sent via HTTP');
+          }).catch((httpErr) => {
+            console.error('[Face Detection] ✗ Failed to send monitoring event:', httpErr);
+          });
         });
+      } else {
+        console.warn('[Face Detection] Cannot send monitoring event - missing exam, attemptId, or user');
       }
     },
   });
@@ -422,32 +510,32 @@ export default function ExamInterface() {
     // Check if we have saved answers to restore
     const restoreAnswers = async () => {
       try {
-        const response = await fetch(`/api/attempts/${attemptId}/answers`);
-        if (!response.ok) {
-          // Server returned an error, don't retry
+        const response = await fetch(`/api/attempts/${attemptId}/answers`, {
+          signal: AbortSignal.timeout(5000), // 5 second timeout
+        }).catch(() => null); // Silently catch connection errors
+        
+        if (!response || !response.ok) {
+          // Server not available or error - silently fail
           return;
         }
-        const data = await response.json();
         
-        if (data.success && data.data.answers) {
-          const savedAnswers = data.data.answers;
-          // Restore answers to examSessionData
-          for (const [questionId, answerData] of Object.entries(savedAnswers)) {
-            const answerInfo = answerData as { answer: string | number; flaggedForReview: boolean };
-            examSessionData.updateAnswer(questionId, answerInfo.answer);
-            if (answerInfo.flaggedForReview) {
-              examSessionData.toggleFlag(questionId);
-            }
+        const data = await response.json().catch(() => null);
+        if (!data || !data.success || !data.data?.answers) {
+          return;
+        }
+        
+        const savedAnswers = data.data.answers;
+        // Restore answers to examSessionData
+        for (const [questionId, answerData] of Object.entries(savedAnswers)) {
+          const answerInfo = answerData as { answer: string | number; flaggedForReview: boolean };
+          examSessionData.updateAnswer(questionId, answerInfo.answer);
+          if (answerInfo.flaggedForReview) {
+            examSessionData.toggleFlag(questionId);
           }
         }
       } catch (error) {
-        // Only log if it's not a connection error (server not running)
-        if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
-          // Server is not running or connection refused - silent fail
-          return;
-        }
-        console.error('Failed to restore saved answers:', error);
-        // Non-fatal - continue without restoration
+        // Silently fail - server might not be running
+        // This is expected during development
       }
     };
     
@@ -741,6 +829,18 @@ export default function ExamInterface() {
     };
   }, [exam, user, examTerminated, isTerminated]);
 
+  // Prevent body scroll when modal is open
+  useEffect(() => {
+    if (showSubmitConfirm) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [showSubmitConfirm]);
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -1024,7 +1124,11 @@ export default function ExamInterface() {
                       className="w-full rounded border"
                       ref={(video) => {
                         videoElementRef.current = video;
+                        console.log('[Face Detection] Video ref callback:', { hasVideo: !!video, hasStream: !!webcam.stream });
+                        // Update video element for face detection when it's available
                         if (video && webcam.stream) {
+                          console.log('[Face Detection] Setting video element for detection');
+                          setVideoElementForDetection(video);
                           // Only update if stream has changed to prevent flickering
                           if (video.srcObject !== webcam.stream) {
                             video.srcObject = webcam.stream;
@@ -1033,6 +1137,8 @@ export default function ExamInterface() {
                               // Silently handle play promise rejection
                             });
                           }
+                        } else {
+                          setVideoElementForDetection(null);
                         }
                       }}
                       key={`video-${webcam.isActive}`}
@@ -1250,8 +1356,21 @@ export default function ExamInterface() {
 
       {/* Submit Confirmation Modal */}
       {showSubmitConfirm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999]"
+          onClick={(e) => {
+            // Close modal when clicking backdrop
+            if (e.target === e.currentTarget) {
+              setShowSubmitConfirm(false);
+            }
+          }}
+          style={{ position: 'fixed' }}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl z-[10000]"
+            onClick={(e) => e.stopPropagation()}
+            style={{ position: 'relative' }}
+          >
             <h3 className="text-lg font-semibold mb-4">Submit Exam</h3>
             <p className="text-gray-600 mb-4">
               Are you sure you want to submit your exam? You have answered {progress.answered} out of {progress.total} questions.

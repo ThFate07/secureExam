@@ -11,6 +11,7 @@ import {
   AlertCircle,
   Trophy,
   Target,
+  Activity,
 } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
 import { Button } from "../../components/ui/button";
@@ -377,6 +378,39 @@ export default function StudentDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Face Detection Demo Card */}
+      <Card className="border-2 border-blue-400 bg-blue-50">
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2 text-blue-900">
+            <Activity className="h-5 w-5" />
+            <span>AI Face Detection Demo</span>
+          </CardTitle>
+          <CardDescription className="text-blue-700">
+            Test the AI-powered face detection system used during exams
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-blue-800">
+              <p className="mb-2">Experience the same AI detection used in proctored exams:</p>
+              <ul className="list-disc list-inside space-y-1 text-xs">
+                <li>See real-time face detection status</li>
+                <li>Test different scenarios (no face, multiple faces, looking away)</li>
+                <li>View detection statistics and debug information</li>
+              </ul>
+            </div>
+            <Button
+              onClick={() => router.push("/demo/face-detection")}
+              variant="outline"
+              className="bg-blue-600 text-white hover:bg-blue-700 border-blue-600"
+            >
+              <Activity className="h-4 w-4 mr-2" />
+              Try Demo
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Available Exams */}
       {availableExams.length > 0 && (

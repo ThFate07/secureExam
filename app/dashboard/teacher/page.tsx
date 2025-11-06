@@ -14,7 +14,8 @@ import {
   Eye,
   PlayCircle,
   Settings,
-  FileText
+  FileText,
+  Activity
 } from "lucide-react";
 import { Exam } from "../../types";
 
@@ -215,6 +216,39 @@ export default function TeacherDashboard() {
           </div>
         </Button>
       </div>
+
+      {/* Face Detection Demo Card */}
+      <Card className="border-2 border-blue-400 bg-blue-50">
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2 text-blue-900">
+            <Activity className="h-5 w-5" />
+            <span>AI Face Detection Demo</span>
+          </CardTitle>
+          <CardDescription className="text-blue-700">
+            Showcase the AI-powered face detection system to judges and stakeholders
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-blue-800">
+              <p className="mb-2">Test and demonstrate real-time face detection capabilities:</p>
+              <ul className="list-disc list-inside space-y-1 text-xs">
+                <li>No face detection</li>
+                <li>Multiple faces detection</li>
+                <li>Looking away detection</li>
+                <li>Face change detection</li>
+              </ul>
+            </div>
+            <Button
+              onClick={() => router.push("/demo/face-detection")}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              <Activity className="h-4 w-4 mr-2" />
+              Open Demo
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Active Exams */}
       <Card>
