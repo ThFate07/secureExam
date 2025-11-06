@@ -100,7 +100,6 @@ const DEFAULT_SETTINGS: ExamSettings = {
   allowReview: false,
   preventTabSwitching: false,
   requireWebcam: false,
-  enableScreenMonitoring: false,
   lockdownBrowser: false,
   enableFullscreenMode: false,
 };

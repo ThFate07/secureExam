@@ -37,7 +37,6 @@ const CreateExamPage: React.FC = () => {
   const defaultSecuritySettings: ExamSecuritySettings = {
     preventTabSwitching: false,
     requireWebcam: false,
-    enableScreenMonitoring: false,
     lockdownBrowser: false,
     shuffleQuestions: false,
     shuffleOptions: false,
@@ -166,7 +165,6 @@ const CreateExamPage: React.FC = () => {
           allowReview: form.securitySettings.allowReview,
           preventTabSwitching: form.securitySettings.preventTabSwitching,
           requireWebcam: form.securitySettings.requireWebcam,
-          enableScreenMonitoring: form.securitySettings.enableScreenMonitoring,
           lockdownBrowser: form.securitySettings.lockdownBrowser,
           maxTabSwitchWarnings: form.securitySettings.maxTabSwitchWarnings,
           enableFullscreenMode: form.securitySettings.enableFullscreenMode,

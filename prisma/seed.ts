@@ -243,7 +243,6 @@ async function main() {
         allowReview: true,
         preventTabSwitching: true,
         requireWebcam: true,
-        enableScreenMonitoring: true,
         lockdownBrowser: false,
       },
       startTime: new Date(),

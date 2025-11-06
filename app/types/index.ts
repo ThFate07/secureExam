@@ -39,7 +39,6 @@ export interface ExamSettings {
   allowReview: boolean;
   preventTabSwitching: boolean;
   requireWebcam: boolean;
-  enableScreenMonitoring: boolean;
   lockdownBrowser: boolean;
   enableFullscreenMode: boolean;
 }

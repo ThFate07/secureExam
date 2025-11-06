@@ -58,15 +58,6 @@ const SecuritySettings: React.FC<SecuritySettingsProps> = ({ settings, onChange 
               />
               <span className="text-sm">Require webcam access</span>
             </Label>
-            <Label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={settings.enableScreenMonitoring}
-                onChange={(e) => updateSetting('enableScreenMonitoring', e.target.checked)}
-              />
-              <span className="text-sm">Enable screen monitoring</span>
-            </Label>
           </div>
         </div>
 
