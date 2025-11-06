@@ -84,12 +84,19 @@ function determineOrientation(landmarks: FaceLandmarks | undefined): FaceOrienta
     y: (leftEyeCenter.y + rightEyeCenter.y) / 2,
   };
 
-  const noseTip = nose[nose.length - 1];
-  const horizontalOffset = (noseTip.x - midPoint.x) / eyeDistance;
-  const verticalOffset = (noseTip.y - midPoint.y) / eyeDistance;
+  // Prefer the central nose landmark which better represents the forward gaze.
+  const noseTipIndex = Math.floor(nose.length / 2);
+  const noseTip = nose[noseTipIndex] ?? nose[nose.length - 1];
+  if (!noseTip) {
+    return "unknown";
+  }
 
-  const yawThreshold = 0.35;
-  const pitchThreshold = 0.45;
+  const noseBridge = nose[0];
+  const horizontalOffset = (noseTip.x - midPoint.x) / eyeDistance;
+  const verticalOffset = noseBridge ? (noseBridge.y - midPoint.y) / eyeDistance : 0;
+
+  const yawThreshold = 0.28;
+  const pitchThreshold = 0.2;
 
   if (Math.abs(horizontalOffset) > yawThreshold || Math.abs(verticalOffset) > pitchThreshold) {
     return "looking-away";
@@ -255,8 +262,8 @@ export function useFaceProctoring({
         if (!videoEl.paused && videoEl.readyState >= 2) {
           const faceapi = faceApiRef.current;
           const options = new faceapi.TinyFaceDetectorOptions({
-            inputSize: 320,
-            scoreThreshold: 0.5,
+            inputSize: 416,
+            scoreThreshold: 0.38,
           });
           const detections = await faceapi
             .detectAllFaces(videoEl, options)
