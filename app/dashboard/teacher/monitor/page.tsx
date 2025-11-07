@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../../../hooks/useAuth";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
@@ -44,8 +44,8 @@ export default function TeacherMonitoringDashboard() {
   const [isConnected, setIsConnected] = useState(false);
   const [showTerminateConfirm, setShowTerminateConfirm] = useState(false);
   const [terminationReason, setTerminationReason] = useState("");
-  const [latestSnapshot, setLatestSnapshot] = useState<{ id: string; url: string; capturedAt: Date } | null>(null);
-  const [snapshotError, setSnapshotError] = useState<string | null>(null);
+  const [, setLatestSnapshot] = useState<{ id: string; url: string; capturedAt: Date } | null>(null);
+  const [, setSnapshotError] = useState<string | null>(null);
 
   const handleIncomingEvent = useCallback((event: MonitoringEvent) => {
     if (!event || !event.type || !event.payload) {
@@ -270,6 +270,7 @@ export default function TeacherMonitoringDashboard() {
 
   const [studentNames, setStudentNames] = useState<Record<string, string>>({});
   const [examTotals, setExamTotals] = useState<Record<string, number>>({});
+  const attemptedStudentIdsRef = useRef<Set<string>>(new Set());
   const selectedKey = selectedStudent ? `${selectedStudent.examId}:${selectedStudent.studentId}` : null;
 
   useEffect(() => {
@@ -335,7 +336,7 @@ export default function TeacherMonitoringDashboard() {
         } else {
           throw new Error(payload?.error || 'Failed to load snapshot');
         }
-      } catch (err) {
+      } catch {
         if (cancelled) return;
         setSnapshotError('Failed to load snapshot');
       }
@@ -352,19 +353,103 @@ export default function TeacherMonitoringDashboard() {
 
   // Fetch student names when needed
   useEffect(() => {
-    const uniqueStudentIds = [...new Set(activeStudents.map(s => s.studentId))];
-    const missingIds = uniqueStudentIds.filter(id => !studentNames[id]);
-    
-    if (missingIds.length > 0) {
-      // In a real implementation, you would fetch from /api/users or similar
-      // For now, we'll set the IDs as names
-      const newNames = { ...studentNames };
-      missingIds.forEach(id => {
-        newNames[id] = `Student ${id.slice(0, 8)}`;
-      });
-      setStudentNames(newNames);
+    if (!isAuthenticated || user?.role !== 'teacher') {
+      return;
     }
-  }, [activeStudents, studentNames]);
+
+    const uniqueStudentIds = Array.from(
+      new Set(activeStudents.map((s) => s.studentId).filter((id): id is string => Boolean(id)))
+    );
+    const attemptedIds = attemptedStudentIdsRef.current;
+    const missingIds = uniqueStudentIds.filter(
+      (id) => !studentNames[id] && !attemptedIds.has(id)
+    );
+
+    if (missingIds.length === 0) {
+      return;
+    }
+
+    missingIds.forEach((id) => attemptedIds.add(id));
+    let cancelled = false;
+
+    (async () => {
+      const resolvedNames: Record<string, string> = {};
+      const failedIds: string[] = [];
+
+      await Promise.allSettled(
+        missingIds.map(async (id) => {
+          try {
+            const response = await fetch(`/api/users/${id}`, {
+              credentials: 'include',
+            });
+
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}`);
+            }
+
+            const payload: {
+              success?: boolean;
+              data?: {
+                user?: {
+                  id: string;
+                  name?: string;
+                  firstName?: string;
+                  lastName?: string;
+                };
+              };
+            } = await response.json();
+
+            if (cancelled) {
+              return;
+            }
+
+            if (payload?.success && payload.data?.user) {
+              const rawName = typeof payload.data.user.name === 'string' ? payload.data.user.name.trim() : '';
+              const fallbackFirst = typeof payload.data.user.firstName === 'string' ? payload.data.user.firstName.trim() : '';
+              const fallbackLast = typeof payload.data.user.lastName === 'string' ? payload.data.user.lastName.trim() : '';
+              const composed = rawName || [fallbackFirst, fallbackLast].filter(Boolean).join(' ');
+
+              if (composed) {
+                resolvedNames[id] = composed;
+                return;
+              }
+            }
+
+            failedIds.push(id);
+          } catch (lookupError) {
+            if (!cancelled) {
+              console.error(`Failed to load student ${id}`, lookupError);
+              failedIds.push(id);
+            }
+          }
+        })
+      );
+
+      if (!cancelled && Object.keys(resolvedNames).length > 0) {
+        setStudentNames((prev) => {
+          let changed = false;
+          const next = { ...prev };
+
+          Object.entries(resolvedNames).forEach(([studentId, name]) => {
+            if (next[studentId] !== name) {
+              next[studentId] = name;
+              changed = true;
+            }
+          });
+
+          return changed ? next : prev;
+        });
+      }
+
+      if (!cancelled && failedIds.length > 0) {
+        failedIds.forEach((id) => attemptedIds.delete(id));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeStudents, isAuthenticated, studentNames, user]);
 
   // Fetch total questions per exam when needed
   useEffect(() => {
@@ -804,7 +889,7 @@ export default function TeacherMonitoringDashboard() {
                 <CardContent>
                   <div className="space-y-3">
                     <p className="text-sm text-gray-600">
-                      Immediately terminate this student's exam. This action cannot be undone.
+                      Immediately terminate this student&#39;s exam. This action cannot be undone.
                     </p>
                     <Button
                       onClick={() => setShowTerminateConfirm(true)}
